@@ -1,6 +1,5 @@
 import os
 import logging
-import re
 import time
 from dotenv import load_dotenv
 from telegram import Update
@@ -82,34 +81,49 @@ def initialize_gemini() -> None:
     global uploaded_files
     global model
 
-    # Configure Gemini API
-    logging.info("Configuring Gemini API from environment")
-    genai.configure(api_key=GOOGLE_API_KEY)
+    try:
+        # Configure Gemini API
+        logging.info("Configuring Gemini API from environment")
+        genai.configure(api_key=GOOGLE_API_KEY)
+        # Initialize the Gemini model
+        logging.info("Initializing Gemini model [%s] from environment", GOOGLE_API_MODEL)
+        model = genai.GenerativeModel(GOOGLE_API_MODEL)
+    except Exception as e:
+        logging.critical("Failed to initialize Gemini model: %s", e)
+        raise
 
-    # Initialize the Gemini model
-    logging.info("Initializing Gemini model [%s] from environment", GOOGLE_API_MODEL)
+    try:
+        # Get the list of uploaded files to the cloud
+        logging.debug("Retrieving the list of files that are currently on the cloud")
+        existing_files_on_cloud = genai.list_files()
 
-    model = genai.GenerativeModel(GOOGLE_API_MODEL)
+        # Delete existing files
+        for file_to_delete in existing_files_on_cloud:
+            logging.info("Deleting old file [%s] with hash [%s]", file_to_delete.name, file_to_delete.sha256_hash)
+            genai.delete_file(file_to_delete.name)
+            logging.debug("File [%s] was deleted", file_to_delete.name)
+    except Exception as e:
+        logging.error("Failed to delete existing files on the cloud: %s", e)
 
     # List of file paths to upload as source
     try:
         logging.debug("Fetching all files in the sources folder")
-        file_paths = list_files_in_folder("./sources")  # Add your file paths here
-        logging.info("Found %i files in sources folder", len(file_paths))
+        source_file_paths = list_files_in_folder("./sources")  # Add your file paths here
+        logging.info("Found %i files in sources folder", len(source_file_paths))
     except Exception as e:
         logging.critical("Cannot retrieve documents from sources folder, error: %s", e)
         raise
 
     # Upload each file and store the uploaded file references
-    for file_path in file_paths:
+    for source_file in source_file_paths:
         try:
-            file_path = "./sources/" + file_path
-            logging.info("Uploading source file: [%s]", file_path)
-            uploaded_file = genai.upload_file(path=file_path, display_name=file_path.rsplit('/', maxsplit=1)[-1])
+            source_file = "./sources/" + source_file
+            logging.info("Uploading source file: [%s]", source_file)
+            uploaded_file = genai.upload_file(path=source_file, display_name=source_file.rsplit('/', maxsplit=1)[-1])
             uploaded_files.append(uploaded_file)
-            logging.info("Source file [%s] uploaded successfully", file_path)
+            logging.info("Source file [%s] uploaded successfully", source_file)
         except Exception as e:
-            logging.critical("Failed to upload PDF file [%s]: %s", file_path, e)
+            logging.critical("Failed to upload PDF file [%s]: %s", source_file, e)
             raise
     logging.info("Uploaded %i files to Gemini AI", len(uploaded_files))
 
@@ -117,9 +131,18 @@ def query_documents(prompt):
     """Queries the uploaded PDFs with the given prompt."""
     formatted_prompt = f"Based solely on the information in the source documents, answer the following question using the same language: `{prompt}`"
     logging.debug("Generated prompt: [%s]", formatted_prompt)
-    
+
     try:
-        response = model.generate_content([*uploaded_files, formatted_prompt])
+        # Create the model
+        model_config = {
+            "temperature": 1,
+            "top_p": 0.95,
+            "top_k": 40,
+            "max_output_tokens": 4096,
+            "response_mime_type": "text/plain",
+        }
+
+        response = model.generate_content([*uploaded_files, formatted_prompt], generation_config=model_config)
         logging.debug("Successfully retrieved response from Gemini API.")
         return response.text
     except Exception as e:
@@ -130,8 +153,7 @@ async def handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handles the /start command."""
     logging.info("Received /start command from user: %s", update.effective_user.id)
     await update.message.reply_text(
-        "Hello\\! Send me a message with your question about the source documents that were provided, and I'll do my best to help you\\!\\.",
-        parse_mode="MarkdownV2"
+        "Hello! Send me a message with your question about Olliter products, and I'll do my best to help you!"
     )
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -193,27 +215,19 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await bot_edit_text(context, processing_message.chat_id, processing_message.message_id, "Sorry, something went wrong while processing your request, please try again later.")
     logging.debug("Updated message with error notification.")
 
-def escape_markdown_v2(text):
+async def bot_edit_text(context, chat_id, message_id, text: str):
     """
-    Escapes special characters for Telegram's MarkdownV2 formatting.
+    Edits the message with the content of the file.
     """
-    escape_chars = r'[_*[\]()~`>#+\-=|{}.!]'
-    return re.sub(escape_chars, r'\\\g<0>', text)
-
-async def bot_edit_text(context, chat_id, message_id, text):
-    """
-    Edits a message using Telegram's MarkdownV2 with escaped characters.
-    """
-    logging.debug("Escaping markdown content")
-    escaped_text = escape_markdown_v2(text)  # Escape special characters
+    logging.debug("Stripping bot answer")
+    escaped_text = text.strip()
 
     try:
         logging.debug("Sending edited message")
         await context.bot.edit_message_text(
             chat_id=chat_id,
             message_id=message_id,
-            text=escaped_text,
-            parse_mode="MarkdownV2"
+            text=escaped_text
         )
     except Exception as ret_exception:
         logging.error(ret_exception)
