@@ -13,6 +13,11 @@ I found this code extremely helpful to quickly retrieve data from a collection o
 - Handles Telegram messages and commands.
 - Supports MarkdownV2 formatting for responses.
 
+## Disclaimer
+
+> [!IMPORTANT]
+> I don't know how Gemini AI or Telegram handles the privacy of APIs, resources and commands being manipulated with this bot, make sure not to share any sensitive information or document
+
 ## Prerequisites
 
 ### Python environment
