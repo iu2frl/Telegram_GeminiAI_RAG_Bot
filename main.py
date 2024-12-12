@@ -1,6 +1,7 @@
 import os
 import logging
 import time
+import asyncio
 from dotenv import load_dotenv
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
@@ -74,7 +75,7 @@ def list_files_in_folder(folder_path):
 
     return [f for f in os.listdir(folder_path) if os.path.isfile(os.path.join(folder_path, f)) and "README.md" not in f]
 
-def initialize_gemini() -> None:
+def gemini_initialize() -> None:
     """Initializes the Gemini AI parameters"""
 
     # Global variables
@@ -127,14 +128,15 @@ def initialize_gemini() -> None:
             raise
     logging.info("Uploaded %i files to Gemini AI", len(uploaded_files))
 
-def query_documents(prompt):
+async def gemini_query_sources(user_request):
     """Queries the uploaded PDFs with the given prompt."""
-    formatted_prompt = f"Based solely on the information in the source documents, answer the following question using the same language: `{prompt}`"
-    logging.debug("Generated prompt: [%s]", formatted_prompt)
+    ai_prompt = f"You are `{TELEGRAM_BOT_NAME}`, a chatbot that can only answer to users request based solely on the source documents. Reply to the following message using the same language: `{user_request}`"
+    logging.debug("Generated prompt: [%s]", ai_prompt)
 
     try:
         # Create the model
         model_config = {
+            "candidate_count": 1,
             "temperature": 1,
             "top_p": 0.95,
             "top_k": 40,
@@ -142,9 +144,10 @@ def query_documents(prompt):
             "response_mime_type": "text/plain",
         }
 
-        response = model.generate_content([*uploaded_files, formatted_prompt], generation_config=model_config)
-        logging.debug("Successfully retrieved response from Gemini API.")
-        return response.text
+        response = await model.generate_content_async([*uploaded_files, ai_prompt], generation_config=model_config)
+        response_text = response.text.strip()
+        logging.info("Successfully retrieved [%i] characters response from Gemini API", len(response_text))
+        return response_text
     except Exception as e:
         logging.warning("Exception while generating answer: %s", e)
         raise
@@ -158,30 +161,44 @@ async def handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Processes user messages and replies with the PDF query result."""
-    user_message = str(update.message.text)
+    user_message_content = str(update.message.text)
     user_id = update.effective_user.id
     chat_id = update.message.chat_id
-    logging.info("Received message from user [%s] from chat_id: [%s] content: [%s]", user_id, chat_id, user_message)
+    logging.debug("Received message from user [%s] from chat_id: [%s]", user_id, chat_id)
 
     if (chat_id > 0):
         # Message is coming from normal user
-        user_message = user_message.strip()
+        user_message_content = user_message_content
     else:
         # Message is coming from a group
-        if (not user_message.startswith(TELEGRAM_BOT_NAME)):
+        if (not user_message_content.startswith(TELEGRAM_BOT_NAME)):
             # Ignore messages from groups if not directed to the bot
-            logging.debug("Ignoring message from [%s] as it was not directed to the bot", user_id)
+            logging.debug("Ignoring message from group [%s] by user [%s] as it was not directed to the bot", chat_id, user_id)
             return
         else:
             # Remove the bot name from the query
-            user_message = user_message[len(TELEGRAM_BOT_NAME):].strip()
+            user_message_content = user_message_content[len(TELEGRAM_BOT_NAME):]
+
+    logging.info("Processing valid message from user [%s] from chat_id: [%s]", user_id, chat_id)
+    logging.debug("Message content: [%s]", user_message_content)
+
+    # Send the cleaned request to the AI
+    await bot_reply_to_message(update, context, user_message_content.strip())
+
+async def bot_reply_to_message(update: Update, context: ContextTypes.DEFAULT_TYPE, user_message_content: str):
+    """
+    This routine handles the cleaned request from the user and passes is to the Gemini APIs.
+    Result is then sent to the user
+    """
+    user_id = update.effective_user.id
+    chat_id = update.message.chat_id
 
     # Send a placeholder message and get the message ID
     processing_message = await update.message.reply_text("Processing your request...")
     logging.debug("Sent placeholder message, waiting for AI to reply.")
 
     # Query the Gemini API with a limited number of attempts
-    logging.debug("Querying sources with user message: %s", user_message)
+    logging.debug("Querying sources with user message: %s", user_message_content)
 
     max_attempts = int(GOOGLE_API_MAX_ATTEMPTS)
     last_error = ""
@@ -189,12 +206,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for i in range(max_attempts):
         try:
             logging.debug("Trying to request answer from Gemini AI, tentative %i out of %s", i + 1, max_attempts)
-            # Request data from Gemini AI
-            result = query_documents(user_message)
+            # Request data from Gemini AI by offloading gemini_query_sources to a thread
+            result = await gemini_query_sources(user_message_content)
             logging.debug("Got a result from Gemini, passing it to the Telegram APIs")
             # Replace the placeholder message with the actual result
             await bot_edit_text(context, processing_message.chat_id, processing_message.message_id, result)
-            logging.info("Replied to user [%s] from chat_id: [%s] with answer from AI: [%s...]", user_id, chat_id, result[:100])
+            logging.debug("Answer from AI: [%s]", result)
+            logging.info("Replied to user [%s] from chat_id: [%s]", user_id, chat_id)
             return
         except Exception as e:
             last_error = f"Error retrieving answer from AI: {e}"
@@ -204,7 +222,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 # If service timeout, try again later
                 await bot_edit_text(context, processing_message.chat_id, processing_message.message_id, "The bot is thinking hard, please wait...")
                 logging.debug("Waiting few seconds before next attempt")
-                time.sleep(3)
+                await asyncio.sleep(3)
             else:
                 # Something bad happeneded and needs to be fixed
                 logging.warning("Exiting the for loop due to an unhandled error")
@@ -246,11 +264,11 @@ def main():
         load_environment()
 
         # Prepare Gemini AI
-        initialize_gemini()
+        gemini_initialize()
 
         # Initialize the Telegram bot
         logging.debug("Building the Telegram bot")
-        app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
+        app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).concurrent_updates(True).build()
 
         # Register handlers
         logging.debug("Registering the /start command handler")
