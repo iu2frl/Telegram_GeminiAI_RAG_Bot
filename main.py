@@ -15,6 +15,11 @@ GOOGLE_API_MODEL = ""
 GOOGLE_API_MAX_ATTEMPTS = ""
 model = None
 uploaded_files = []
+reloading_gemini = False
+
+class GeminiException(BaseException):
+    """Used to identify errors from Gemini"""
+    pass
 
 def configure_logging() -> None:
     """Configure logging options"""
@@ -100,7 +105,7 @@ def gemini_initialize() -> None:
 
         # Delete existing files
         for file_to_delete in existing_files_on_cloud:
-            logging.info("Deleting old file [%s] with hash [%s]", file_to_delete.name, file_to_delete.sha256_hash)
+            logging.info("Deleting old file [%s] uploaded on [%s] with hash [%s]", file_to_delete.name, file_to_delete.create_time, file_to_delete.sha256_hash)
             genai.delete_file(file_to_delete.name)
             logging.debug("File [%s] was deleted", file_to_delete.name)
     except Exception as e:
@@ -122,7 +127,7 @@ def gemini_initialize() -> None:
             logging.info("Uploading source file: [%s]", source_file)
             uploaded_file = genai.upload_file(path=source_file, display_name=source_file.rsplit('/', maxsplit=1)[-1])
             uploaded_files.append(uploaded_file)
-            logging.info("Source file [%s] uploaded successfully", source_file)
+            logging.info("Source file [%s] uploaded successfully. Expire date: [%s]", source_file, uploaded_file.expiration_time)
         except Exception as e:
             logging.critical("Failed to upload PDF file [%s]: %s", source_file, e)
             raise
@@ -150,7 +155,7 @@ async def gemini_query_sources(user_request):
         return response_text
     except Exception as e:
         logging.warning("Exception while generating answer: %s", e)
-        raise
+        raise GeminiException(e) from e
 
 async def handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handles the /start command."""
@@ -192,11 +197,21 @@ async def bot_reply_to_message(update: Update, context: ContextTypes.DEFAULT_TYP
     """
     user_id = update.effective_user.id
     chat_id = update.message.chat_id
+    
+    # Avoid processing messages if Gemini APIs are restarting
+    global reloading_gemini
 
     # Send a placeholder message and get the message ID
     processing_message = await update.message.reply_text("Processing your request...")
     logging.debug("Sent placeholder message, waiting for AI to reply.")
 
+    if (reloading_gemini):
+        # If the Gemini API is being reloaded, wait for it to complete
+        logging.info("Gemini API is being reloaded, waiting for it to complete.")
+        await bot_edit_text(context, processing_message.chat_id, processing_message.message_id, "The source files on the server are being updated, please wait...")
+        while (reloading_gemini):
+            await asyncio.sleep(1)
+    
     # Query the Gemini API with a limited number of attempts
     logging.debug("Querying sources with user message: %s", user_message_content)
 
@@ -214,23 +229,51 @@ async def bot_reply_to_message(update: Update, context: ContextTypes.DEFAULT_TYP
             logging.debug("Answer from AI: [%s]", result)
             logging.info("Replied to user [%s] from chat_id: [%s]", user_id, chat_id)
             return
-        except Exception as e:
-            last_error = f"Error retrieving answer from AI: {e}"
-            logging.warning(last_error)
-            
-            if "service is temporarily unavailable" in str(e):
-                # If service timeout, try again later
-                await bot_edit_text(context, processing_message.chat_id, processing_message.message_id, "The bot is thinking hard, please wait...")
-                logging.debug("Waiting few seconds before next attempt")
-                await asyncio.sleep(3)
-            else:
-                # Something bad happeneded and needs to be fixed
-                logging.warning("Exiting the for loop due to an unhandled error")
-                break
+        except GeminiException as gemini_error:
+            last_error = f"Error retrieving answer from AI: {gemini_error}"
+            logging.error(last_error)
+            error_code = 0
+            telegram_error_message = "Please wait..."
+            try:
+                error_code = int(str(gemini_error).split(' ', maxsplit=1)[0])
+                logging.warning("Error code %i. Waiting few seconds before next attempt", error_code)
+                if 500 <= error_code < 600:
+                    # If service timeout, try again later
+                    telegram_error_message = "The bot is thinking hard, but he will be back soon, please wait..."
+                elif 400 <= error_code < 500:
+                    # For some reason we cannot connect load the files (permission error) - Files are probably expired
+                    telegram_error_message = "The bot is having some hard time finding the right book from the shelf, please wait..."
+                    if error_code == 403:
+                        # If permission denied, files are expired, reload them
+                        logging.info("Files might be expired, need to reload them")
+                        try:
+                            reloading_gemini = True
+                            gemini_initialize()
+                        except Exception as gemini_init_exception:
+                            logging.error("Failed to reload files, error: %s", gemini_init_exception)
+                        finally:
+                            reloading_gemini = False
+                else:
+                    # Something bad happeneded and needs to be fixed
+                    logging.warning("Exiting the for loop due to an unhandled error: %s", gemini_error)
+                    break
+            except ValueError:
+                # Cannot get the server error from Gemini
+                logging.warning("Error code not found in Gemini error message: %s", gemini_error)
+                telegram_error_message = "Unexpected server error, trying again."
+            finally:
+                logging.debug("Sending the error message to Telegram chat: [%s]", telegram_error_message)
+                await bot_edit_text(context, processing_message.chat_id, processing_message.message_id, telegram_error_message)
+        except Exception as generic_exception:
+            telegram_error_message = "Unexpected server error."
+            logging.error("Unexpected error occurred while querying Gemini API: %s", generic_exception)
+            await bot_edit_text(context, processing_message.chat_id, processing_message.message_id, telegram_error_message)
+        finally:
+            await asyncio.sleep(3)
 
-    logging.error("Error while processing message from user [%s]: %s", user_id, last_error)
+    logging.error("Error while creating an answer for user [%s]: %s", user_id, last_error)
     # Replace the placeholder message with an error message
-    await bot_edit_text(context, processing_message.chat_id, processing_message.message_id, "Sorry, something went wrong while processing your request, please try again later.")
+    await bot_send_message(context, processing_message.chat_id, "Sorry, something went wrong while processing your request, please try again later.")
     logging.debug("Updated message with error notification.")
 
 async def bot_edit_text(context, chat_id, message_id, text: str):
@@ -249,11 +292,11 @@ async def bot_edit_text(context, chat_id, message_id, text: str):
         )
     except Exception as ret_exception:
         logging.error(ret_exception)
-        await context.bot.edit_message_text(
-            chat_id=chat_id,
-            message_id=message_id,
-            text="An error occurred, please try again later"
-        )
+        await bot_send_message(context, chat_id, "An error occurred, please try again later")
+
+async def bot_send_message(context, chat_id, message):
+    """Send a message to the user"""
+    await context.bot.send_message(chat_id, message)
 
 def main():
     """Main routine of the robot"""
