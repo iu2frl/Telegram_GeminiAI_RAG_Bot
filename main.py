@@ -17,8 +17,20 @@ model = None
 uploaded_files = []
 reloading_gemini = False
 
-class GeminiException(BaseException):
+class GeminiModelCreationException(BaseException):
     """Used to identify errors from Gemini"""
+    pass
+
+class GeminiApiInitializeException(BaseException):
+    """Used to identify initialization errors"""
+    pass
+
+class GeminiRagUploadException(BaseException):
+    """Used to identify files upload errors"""
+    pass
+
+class GeminiFilesListingException(BaseException):
+    """Used to identify files upload errors"""
     pass
 
 def configure_logging() -> None:
@@ -96,7 +108,7 @@ def gemini_initialize() -> None:
         model = genai.GenerativeModel(GOOGLE_API_MODEL)
     except Exception as e:
         logging.critical("Failed to initialize Gemini model: %s", e)
-        raise
+        raise GeminiApiInitializeException(e) from e
 
     try:
         # Get the list of uploaded files to the cloud
@@ -118,7 +130,10 @@ def gemini_initialize() -> None:
         logging.info("Found %i files in sources folder", len(source_file_paths))
     except Exception as e:
         logging.critical("Cannot retrieve documents from sources folder, error: %s", e)
-        raise
+        raise GeminiFilesListingException(e) from e
+
+    # Make sure list is empty in case of new uploads
+    uploaded_files.clear()
 
     # Upload each file and store the uploaded file references
     for source_file in source_file_paths:
@@ -131,7 +146,10 @@ def gemini_initialize() -> None:
         except Exception as e:
             logging.critical("Failed to upload PDF file [%s]: %s", source_file, e)
             raise
-    logging.info("Uploaded %i files to Gemini AI", len(uploaded_files))
+    if len(uploaded_files) > 0:
+        logging.info("Uploaded %i files to Gemini AI", len(uploaded_files))
+    else:
+        raise GeminiRagUploadException("No valid files could be uploaded to Gemini AI")
 
 async def gemini_query_sources(user_request):
     """Queries the uploaded PDFs with the given prompt."""
@@ -155,7 +173,7 @@ async def gemini_query_sources(user_request):
         return response_text
     except Exception as e:
         logging.warning("Exception while generating answer: %s", e)
-        raise GeminiException(e) from e
+        raise GeminiModelCreationException(e) from e
 
 async def handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handles the /start command."""
@@ -229,7 +247,7 @@ async def bot_reply_to_message(update: Update, context: ContextTypes.DEFAULT_TYP
             logging.debug("Answer from AI: [%s]", result)
             logging.info("Replied to user [%s] from chat_id: [%s]", user_id, chat_id)
             return
-        except GeminiException as gemini_error:
+        except GeminiModelCreationException as gemini_error:
             last_error = f"Error retrieving answer from AI: {gemini_error}"
             logging.error(last_error)
             error_code = 0
@@ -245,7 +263,7 @@ async def bot_reply_to_message(update: Update, context: ContextTypes.DEFAULT_TYP
                     telegram_error_message = "The bot is having some hard time finding the right book from the shelf, please wait..."
                     if error_code == 403:
                         # If permission denied, files are expired, reload them
-                        logging.info("Files might be expired, need to reload them")
+                        logging.warning("Files might be expired, need to reload them")
                         try:
                             reloading_gemini = True
                             gemini_initialize()
@@ -260,7 +278,7 @@ async def bot_reply_to_message(update: Update, context: ContextTypes.DEFAULT_TYP
             except ValueError:
                 # Cannot get the server error from Gemini
                 logging.warning("Error code not found in Gemini error message: %s", gemini_error)
-                telegram_error_message = "Unexpected server error, trying again."
+                telegram_error_message = "Unexpected server error, please trying again later."
             finally:
                 logging.debug("Sending the error message to Telegram chat: [%s]", telegram_error_message)
                 await bot_edit_text(context, processing_message.chat_id, processing_message.message_id, telegram_error_message)
