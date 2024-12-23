@@ -33,6 +33,10 @@ class GeminiFilesListingException(BaseException):
     """Used to identify files upload errors"""
     pass
 
+class GeminiQueryException(BaseException):
+    """Used to identify files expired errors"""
+    pass
+
 def configure_logging() -> None:
     """Configure logging options"""
     logging.basicConfig(
@@ -65,17 +69,31 @@ def load_environment() -> None:
     GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
     GOOGLE_API_MODEL = os.getenv("GOOGLE_API_MODEL", "gemini-1.5-flash")
     GOOGLE_API_MAX_ATTEMPTS = os.getenv("GOOGLE_API_MAX_ATTEMPTS", "2")
+    BUILD_DATE = os.getenv("BUILD_DATE", "Unknown")
 
     # Check for configuration
     if not TELEGRAM_BOT_TOKEN:
         logging.critical("Missing TELEGRAM_API_KEY in the environment variables.")
         raise EnvironmentError("Missing required environment variables.")
+    else:
+        logging.info("Telegram bot token loaded successfully.")
+        
     if not GOOGLE_API_KEY:
         logging.critical("Missing GOOGLE_API_KEY in the environment variables.")
         raise EnvironmentError("Missing required environment variables.")
+    else:
+        logging.info("Google API key loaded successfully.")
+        
     if not TELEGRAM_BOT_NAME:
         logging.critical("Missing TELEGRAM_BOT_NAME in the environment variables.")
         raise EnvironmentError("Missing required environment variables.")
+    else:
+        logging.info("Telegram bot name loaded successfully.")
+        
+    logging.info("Using Gemini API model: %s", GOOGLE_API_MODEL)
+    logging.info("Maximum Gemini API attempts: %s", GOOGLE_API_MAX_ATTEMPTS)
+    
+    logging.info(f"Docker image build date: {BUILD_DATE}")
 
 def list_files_in_folder(folder_path):
     """
@@ -98,6 +116,7 @@ def gemini_initialize() -> None:
     # Global variables
     global uploaded_files
     global model
+    global reloading_gemini
 
     try:
         # Configure Gemini API
@@ -173,7 +192,7 @@ async def gemini_query_sources(user_request):
         return response_text
     except Exception as e:
         logging.warning("Exception while generating answer: %s", e)
-        raise GeminiModelCreationException(e) from e
+        raise GeminiQueryException(e) from e
 
 async def handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handles the /start command."""
@@ -230,11 +249,12 @@ async def bot_reply_to_message(update: Update, context: ContextTypes.DEFAULT_TYP
         while (reloading_gemini):
             await asyncio.sleep(1)
     
-    # Query the Gemini API with a limited number of attempts
-    logging.debug("Querying sources with user message: %s", user_message_content)
+    # Query the Gemini API with a limited number of attempts (defined in the environment)
+    logging.info("User [%s] with ID [%i] asked: [%s]", update.effective_user.name, user_id, user_message_content)
 
     max_attempts = int(GOOGLE_API_MAX_ATTEMPTS)
     last_error = ""
+    telegram_error_message = "Please wait..."
 
     for i in range(max_attempts):
         try:
@@ -246,15 +266,20 @@ async def bot_reply_to_message(update: Update, context: ContextTypes.DEFAULT_TYP
             await bot_edit_text(context, processing_message.chat_id, processing_message.message_id, result)
             logging.debug("Answer from AI: [%s]", result)
             logging.info("Replied to user [%s] from chat_id: [%s]", user_id, chat_id)
+            # Exit the loop if successful
             return
-        except GeminiModelCreationException as gemini_error:
-            last_error = f"Error retrieving answer from AI: {gemini_error}"
-            logging.error(last_error)
+        except GeminiQueryException as gemini_error:
+            error_message = str(gemini_error)
+            last_error = f"Error retrieving answer from AI: {error_message}"
+            logging.error("Last error: %s", last_error)
             error_code = 0
-            telegram_error_message = "Please wait..."
             try:
-                error_code = int(str(gemini_error).split(' ', maxsplit=1)[0])
-                logging.warning("Error code %i. Waiting few seconds before next attempt", error_code)
+                last_error = f"Error retrieving answer from AI: {error_message}"
+                logging.warning(last_error)
+                # Extract the error code from the message
+                error_code = int(str(error_message).split(' ', maxsplit=1)[0])
+                logging.warning("Gemini APIs returned error code: [%i]", error_code)
+                # Handle the error code
                 if 500 <= error_code < 600:
                     # If service timeout, try again later
                     telegram_error_message = "The bot is thinking hard, but he will be back soon, please wait..."
@@ -268,26 +293,28 @@ async def bot_reply_to_message(update: Update, context: ContextTypes.DEFAULT_TYP
                             reloading_gemini = True
                             gemini_initialize()
                         except Exception as gemini_init_exception:
-                            logging.error("Failed to reload files, error: %s", gemini_init_exception)
+                            logging.critical("Failed to reload files, error: %s", gemini_init_exception)
+                            last_error = f"Error reloading files: {str(gemini_init_exception)}"
                         finally:
                             reloading_gemini = False
                 else:
                     # Something bad happeneded and needs to be fixed
-                    logging.warning("Exiting the for loop due to an unhandled error: %s", gemini_error)
+                    telegram_error_message = "Unexpected server error, please trying again later."
+                    logging.critical("Exiting the for loop due to an unhandled error: %s", error_message)
                     break
             except ValueError:
                 # Cannot get the server error from Gemini
-                logging.warning("Error code not found in Gemini error message: %s", gemini_error)
-                telegram_error_message = "Unexpected server error, please trying again later."
-            finally:
-                logging.debug("Sending the error message to Telegram chat: [%s]", telegram_error_message)
-                await bot_edit_text(context, processing_message.chat_id, processing_message.message_id, telegram_error_message)
+                last_error = f"Error converting error code from AI: {error_message}"
+                logging.warning(last_error)
+                telegram_error_message = "Unexpected server error, trying again, please be patient"
         except Exception as generic_exception:
-            telegram_error_message = "Unexpected server error."
-            logging.error("Unexpected error occurred while querying Gemini API: %s", generic_exception)
-            await bot_edit_text(context, processing_message.chat_id, processing_message.message_id, telegram_error_message)
-        finally:
-            await asyncio.sleep(3)
+            telegram_error_message = "Unexpected server error, trying again, please be patient"
+            last_error = f"Unexpected error occurred while querying Gemini API: {str(generic_exception)}"
+            logging.error(last_error)
+        
+        logging.warning("Waiting 3 seconds before next attempt, sending answer to client")
+        await bot_edit_text(context, processing_message.chat_id, processing_message.message_id, telegram_error_message)
+        await asyncio.sleep(3)
 
     logging.error("Error while creating an answer for user [%s]: %s", user_id, last_error)
     # Replace the placeholder message with an error message
