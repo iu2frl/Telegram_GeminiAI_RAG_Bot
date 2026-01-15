@@ -1,381 +1,201 @@
+"""
+Main code for the Telegram Gemini AI assistant bot.
+"""
+
 import os
+import sys
 import logging
+import threading
 import time
-import asyncio
+import schedule
 from dotenv import load_dotenv
-from telegram import Update
-from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
-import google.generativeai as genai
 
-# Global variables
-TELEGRAM_BOT_TOKEN = ""
-TELEGRAM_BOT_NAME = ""
-GOOGLE_API_KEY = ""
-GOOGLE_API_MODEL = ""
-GOOGLE_API_MAX_ATTEMPTS = ""
-model = None
-uploaded_files = []
-reloading_gemini = False
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters
 
-class GeminiModelCreationException(BaseException):
-    """Used to identify errors from Gemini"""
-    pass
+from modules.exceptions import TelegramFloodControlException
+from modules.logger import configure_logging
+from modules.repos import pull_and_update
+from modules.telegram import handle_start, handle_message, handle_telegram_error
+from modules import state
 
-class GeminiApiInitializeException(BaseException):
-    """Used to identify initialization errors"""
-    pass
-
-class GeminiRagUploadException(BaseException):
-    """Used to identify files upload errors"""
-    pass
-
-class GeminiFilesListingException(BaseException):
-    """Used to identify files upload errors"""
-    pass
-
-class GeminiQueryException(BaseException):
-    """Used to identify files expired errors"""
-    pass
-
-def configure_logging() -> None:
-    """Configure logging options"""
-    logging.basicConfig(
-        level=logging.INFO,  # Set to DEBUG for detailed logs; use INFO in production
-        format='%(asctime)s - %(levelname)s - %(funcName)s - %(message)s',
-        datefmt='%Y-%m-%d %H:%M:%S',
-    )
-
-    # Set specific modules to WARNING level
-    logging.getLogger("hpack").setLevel(logging.WARNING)
-    logging.getLogger("urllib3").setLevel(logging.WARNING)
-    logging.getLogger("httpx").setLevel(logging.WARNING)
+# Main code
 
 def load_environment() -> None:
-    """ Environment secrets are loaded using the .env file or straight from the system"""
+    """Environment secrets are loaded using the .env file or straight from the system"""
 
     # Load variables from .env file (if any)
     load_dotenv()
 
     # Get global configuration
-    global TELEGRAM_BOT_TOKEN
-    global TELEGRAM_BOT_NAME
-    global GOOGLE_API_KEY
-    global GOOGLE_API_MODEL
-    global GOOGLE_API_MAX_ATTEMPTS
-
     # Assign new values
-    TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_API_KEY")
-    TELEGRAM_BOT_NAME = os.getenv("TELEGRAM_BOT_NAME")
-    GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
-    GOOGLE_API_MODEL = os.getenv("GOOGLE_API_MODEL", "gemini-1.5-flash")
-    GOOGLE_API_MAX_ATTEMPTS = os.getenv("GOOGLE_API_MAX_ATTEMPTS", "2")
-    BUILD_DATE = os.getenv("BUILD_DATE", "Unknown")
+    state.TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_API_KEY")
+    state.TELEGRAM_BOT_NAME = os.getenv("TELEGRAM_BOT_NAME")
+    state.GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
+    state.GOOGLE_API_MODEL = os.getenv("GOOGLE_API_MODEL")
+    state.GOOGLE_API_MAX_ATTEMPTS = os.getenv("GOOGLE_API_MAX_ATTEMPTS", "2")
+    state.BUILD_DATE = os.getenv("BUILD_DATE", "Unknown")
+    state.REPO_URL = os.getenv("REPO_URL", "")
+    state.TELEGRAM_RESTART_DELAY_SECONDS = os.getenv("TELEGRAM_RESTART_DELAY_SECONDS", "15")
+    
+    try:
+        delay_seconds = int(state.TELEGRAM_RESTART_DELAY_SECONDS)
+        if delay_seconds < 0:
+            logging.warning("Restart delay is negative (%s), forcing to 0", delay_seconds)
+            delay_seconds = 0
+        if delay_seconds > 600:
+            logging.warning("Restart delay too large (%s), capping to 600", delay_seconds)
+            delay_seconds = 600
+        state.TELEGRAM_RESTART_DELAY_SECONDS = str(delay_seconds)
+    except (TypeError, ValueError):
+        logging.warning("Invalid TELEGRAM_RESTART_DELAY_SECONDS [%s], using default 15", state.TELEGRAM_RESTART_DELAY_SECONDS)
+        state.TELEGRAM_RESTART_DELAY_SECONDS = "15"
 
     # Check for configuration
-    if not TELEGRAM_BOT_TOKEN:
+    if not state.TELEGRAM_BOT_TOKEN:
         logging.critical("Missing TELEGRAM_API_KEY in the environment variables.")
-        raise EnvironmentError("Missing required environment variables.")
+        raise EnvironmentError("Missing required TELEGRAM_BOT_TOKEN environment variables.")
     else:
         logging.info("Telegram bot token loaded successfully.")
-        
-    if not GOOGLE_API_KEY:
+
+    if not state.GOOGLE_API_KEY:
         logging.critical("Missing GOOGLE_API_KEY in the environment variables.")
-        raise EnvironmentError("Missing required environment variables.")
+        raise EnvironmentError("Missing required GOOGLE_API_KEY environment variables.")
     else:
         logging.info("Google API key loaded successfully.")
-        
-    if not TELEGRAM_BOT_NAME:
+
+    if not state.TELEGRAM_BOT_NAME:
         logging.critical("Missing TELEGRAM_BOT_NAME in the environment variables.")
-        raise EnvironmentError("Missing required environment variables.")
+        raise EnvironmentError("Missing required TELEGRAM_BOT_NAME environment variables.")
     else:
         logging.info("Telegram bot name loaded successfully.")
-        
-    logging.info("Using Gemini API model: %s", GOOGLE_API_MODEL)
-    logging.info("Maximum Gemini API attempts: %s", GOOGLE_API_MAX_ATTEMPTS)
-    
-    logging.info(f"Docker image build date: {BUILD_DATE}")
 
-def list_files_in_folder(folder_path):
-    """
-    Returns a list of all files in the given folder.
-
-    Args:
-        folder_path (str): Path to the folder.
-
-    Returns:
-        list: List of file names in the folder.
-    """
-    if not os.path.isdir(folder_path):
-        raise ValueError(f"The provided path [{folder_path}] is not a directory.")
-
-    return [f for f in os.listdir(folder_path) if os.path.isfile(os.path.join(folder_path, f)) and "README.md" not in f]
-
-def gemini_initialize() -> None:
-    """Initializes the Gemini AI parameters"""
-
-    # Global variables
-    global uploaded_files
-    global model
-    global reloading_gemini
-
-    try:
-        # Configure Gemini API
-        logging.info("Configuring Gemini API from environment")
-        genai.configure(api_key=GOOGLE_API_KEY)
-        # Initialize the Gemini model
-        logging.info("Initializing Gemini model [%s] from environment", GOOGLE_API_MODEL)
-        model = genai.GenerativeModel(GOOGLE_API_MODEL)
-    except Exception as e:
-        logging.critical("Failed to initialize Gemini model: %s", e)
-        raise GeminiApiInitializeException(e) from e
-
-    try:
-        # Get the list of uploaded files to the cloud
-        logging.debug("Retrieving the list of files that are currently on the cloud")
-        existing_files_on_cloud = genai.list_files()
-
-        # Delete existing files
-        for file_to_delete in existing_files_on_cloud:
-            logging.info("Deleting old file [%s] uploaded on [%s] with hash [%s]", file_to_delete.name, file_to_delete.create_time, file_to_delete.sha256_hash)
-            genai.delete_file(file_to_delete.name)
-            logging.debug("File [%s] was deleted", file_to_delete.name)
-    except Exception as e:
-        logging.error("Failed to delete existing files on the cloud: %s", e)
-
-    # List of file paths to upload as source
-    try:
-        logging.debug("Fetching all files in the sources folder")
-        source_file_paths = list_files_in_folder("./sources")  # Add your file paths here
-        logging.info("Found %i files in sources folder", len(source_file_paths))
-    except Exception as e:
-        logging.critical("Cannot retrieve documents from sources folder, error: %s", e)
-        raise GeminiFilesListingException(e) from e
-
-    # Make sure list is empty in case of new uploads
-    uploaded_files.clear()
-
-    # Upload each file and store the uploaded file references
-    for source_file in source_file_paths:
-        try:
-            source_file = "./sources/" + source_file
-            logging.info("Uploading source file: [%s]", source_file)
-            uploaded_file = genai.upload_file(path=source_file, display_name=source_file.rsplit('/', maxsplit=1)[-1])
-            uploaded_files.append(uploaded_file)
-            logging.info("Source file [%s] uploaded successfully. Expire date: [%s]", source_file, uploaded_file.expiration_time)
-        except Exception as e:
-            logging.critical("Failed to upload PDF file [%s]: %s", source_file, e)
-            raise
-    if len(uploaded_files) > 0:
-        logging.info("Uploaded %i files to Gemini AI", len(uploaded_files))
+    if not state.REPO_URL:
+        logging.critical("Missing REPO_URL in the environment variables.")
+        raise EnvironmentError("Missing required REPO_URL environment variables.")
     else:
-        raise GeminiRagUploadException("No valid files could be uploaded to Gemini AI")
+        logging.info("Repository URL loaded successfully.")
 
-async def gemini_query_sources(user_request):
-    """Queries the uploaded PDFs with the given prompt."""
-    ai_prompt = f"You are `{TELEGRAM_BOT_NAME}`, a chatbot that can only answer to users request based solely on the source documents. Reply to the following message using the same language: `{user_request}`"
-    logging.debug("Generated prompt: [%s]", ai_prompt)
-
-    try:
-        # Create the model
-        model_config = {
-            "candidate_count": 1,
-            "temperature": 1,
-            "top_p": 0.95,
-            "top_k": 40,
-            "max_output_tokens": 4096,
-            "response_mime_type": "text/plain",
-        }
-
-        response = await model.generate_content_async([*uploaded_files, ai_prompt], generation_config=model_config)
-        response_text = response.text.strip()
-        logging.info("Successfully retrieved [%i] characters response from Gemini API", len(response_text))
-        return response_text
-    except Exception as e:
-        logging.warning("Exception while generating answer: %s", e)
-        raise GeminiQueryException(e) from e
-
-async def handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handles the /start command."""
-    logging.info("Received /start command from user: %s", update.effective_user.id)
-    await update.message.reply_text(
-        "Hello! Send me a message with your question about Olliter products, and I'll do my best to help you!"
-    )
-
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Processes user messages and replies with the PDF query result."""
-    user_message_content = str(update.message.text)
-    user_id = update.effective_user.id
-    chat_id = update.message.chat_id
-    logging.debug("Received message from user [%s] from chat_id: [%s]", user_id, chat_id)
-
-    if (chat_id > 0):
-        # Message is coming from normal user
-        user_message_content = user_message_content
+    if not state.GOOGLE_API_MODEL:
+        logging.warning("Missing GOOGLE_API_MODEL in the environment variables, using default.")
+        state.GOOGLE_API_MODEL = "gemini-2.0-flash"
     else:
-        # Message is coming from a group
-        if (not user_message_content.startswith(TELEGRAM_BOT_NAME)):
-            # Ignore messages from groups if not directed to the bot
-            logging.debug("Ignoring message from group [%s] by user [%s] as it was not directed to the bot", chat_id, user_id)
-            return
-        else:
-            # Remove the bot name from the query
-            user_message_content = user_message_content[len(TELEGRAM_BOT_NAME):]
+        logging.info("Google API model %s loaded successfully.", state.GOOGLE_API_MODEL)
 
-    logging.info("Processing valid message from user [%s] from chat_id: [%s]", user_id, chat_id)
-    logging.debug("Message content: [%s]", user_message_content)
+    logging.info("Using Gemini API model: %s", state.GOOGLE_API_MODEL)
+    logging.info("Maximum Gemini API attempts: %s", state.GOOGLE_API_MAX_ATTEMPTS)
 
-    # Send the cleaned request to the AI
-    await bot_reply_to_message(update, context, user_message_content.strip())
+    logging.info("Docker image build date: %s", state.BUILD_DATE)
+    logging.info("Restart delay on flood control: %s seconds", state.TELEGRAM_RESTART_DELAY_SECONDS)
 
-async def bot_reply_to_message(update: Update, context: ContextTypes.DEFAULT_TYPE, user_message_content: str):
-    """
-    This routine handles the cleaned request from the user and passes is to the Gemini APIs.
-    Result is then sent to the user
-    """
-    user_id = update.effective_user.id
-    chat_id = update.message.chat_id
-    
-    # Avoid processing messages if Gemini APIs are restarting
-    global reloading_gemini
+def run_scheduler():
+    """Runs the scheduler in a separate thread"""
+    logging.info("Starting scheduler thread...")
+    schedule.every().day.at("00:00").do(pull_and_update)
+    logging.debug("Scheduled daily repository update at 00:00")
 
-    # Send a placeholder message and get the message ID
-    processing_message = await update.message.reply_text("Processing your request...")
-    logging.debug("Sent placeholder message, waiting for AI to reply.")
-
-    if (reloading_gemini):
-        # If the Gemini API is being reloaded, wait for it to complete
-        logging.info("Gemini API is being reloaded, waiting for it to complete.")
-        await bot_edit_text(context, processing_message.chat_id, processing_message.message_id, "The source files on the server are being updated, please wait...")
-        while (reloading_gemini):
-            await asyncio.sleep(1)
-    
-    # Query the Gemini API with a limited number of attempts (defined in the environment)
-    logging.info("User [%s] with ID [%i] asked: [%s]", update.effective_user.name, user_id, user_message_content)
-
-    max_attempts = int(GOOGLE_API_MAX_ATTEMPTS)
-    last_error = ""
-    telegram_error_message = "Please wait..."
-
-    for i in range(max_attempts):
-        try:
-            logging.debug("Trying to request answer from Gemini AI, tentative %i out of %s", i + 1, max_attempts)
-            # Request data from Gemini AI by offloading gemini_query_sources to a thread
-            result = await gemini_query_sources(user_message_content)
-            logging.debug("Got a result from Gemini, passing it to the Telegram APIs")
-            # Replace the placeholder message with the actual result
-            await bot_edit_text(context, processing_message.chat_id, processing_message.message_id, result)
-            logging.debug("Answer from AI: [%s]", result)
-            logging.info("Replied to user [%s] from chat_id: [%s]", user_id, chat_id)
-            # Exit the loop if successful
-            return
-        except GeminiQueryException as gemini_error:
-            error_message = str(gemini_error)
-            last_error = f"Error retrieving answer from AI: {error_message}"
-            logging.error("Last error: %s", last_error)
-            error_code = 0
-            try:
-                last_error = f"Error retrieving answer from AI: {error_message}"
-                logging.warning(last_error)
-                # Extract the error code from the message
-                error_code = int(str(error_message).split(' ', maxsplit=1)[0])
-                logging.warning("Gemini APIs returned error code: [%i]", error_code)
-                # Handle the error code
-                if 500 <= error_code < 600:
-                    # If service timeout, try again later
-                    telegram_error_message = "The bot is thinking hard, but he will be back soon, please wait..."
-                elif 400 <= error_code < 500:
-                    # For some reason we cannot connect load the files (permission error) - Files are probably expired
-                    telegram_error_message = "The bot is having some hard time finding the right book from the shelf, please wait..."
-                    if error_code == 403:
-                        # If permission denied, files are expired, reload them
-                        logging.warning("Files might be expired, need to reload them")
-                        try:
-                            reloading_gemini = True
-                            gemini_initialize()
-                        except Exception as gemini_init_exception:
-                            logging.critical("Failed to reload files, error: %s", gemini_init_exception)
-                            last_error = f"Error reloading files: {str(gemini_init_exception)}"
-                        finally:
-                            reloading_gemini = False
-                else:
-                    # Something bad happeneded and needs to be fixed
-                    telegram_error_message = "Unexpected server error, please trying again later."
-                    logging.critical("Exiting the for loop due to an unhandled error: %s", error_message)
-                    break
-            except ValueError:
-                # Cannot get the server error from Gemini
-                last_error = f"Error converting error code from AI: {error_message}"
-                logging.warning(last_error)
-                telegram_error_message = "Unexpected server error, trying again, please be patient"
-        except Exception as generic_exception:
-            telegram_error_message = "Unexpected server error, trying again, please be patient"
-            last_error = f"Unexpected error occurred while querying Gemini API: {str(generic_exception)}"
-            logging.error(last_error)
-        
-        logging.warning("Waiting 3 seconds before next attempt, sending answer to client")
-        await bot_edit_text(context, processing_message.chat_id, processing_message.message_id, telegram_error_message)
-        await asyncio.sleep(3)
-
-    logging.error("Error while creating an answer for user [%s]: %s", user_id, last_error)
-    # Replace the placeholder message with an error message
-    await bot_send_message(context, processing_message.chat_id, "Sorry, something went wrong while processing your request, please try again later.")
-    logging.debug("Updated message with error notification.")
-
-async def bot_edit_text(context, chat_id, message_id, text: str):
-    """
-    Edits the message with the content of the file.
-    """
-    logging.debug("Stripping bot answer")
-    escaped_text = text.strip()
-
-    try:
-        logging.debug("Sending edited message")
-        await context.bot.edit_message_text(
-            chat_id=chat_id,
-            message_id=message_id,
-            text=escaped_text
-        )
-    except Exception as ret_exception:
-        logging.error(ret_exception)
-        await bot_send_message(context, chat_id, "An error occurred, please try again later")
-
-async def bot_send_message(context, chat_id, message):
-    """Send a message to the user"""
-    await context.bot.send_message(chat_id, message)
+    while True:
+        schedule.run_pending()
+        time.sleep(1)
 
 def main():
     """Main routine of the robot"""
     logging.info("Starting the AI assistant bot...")
 
-    try:
-        # Load environment variables
-        load_environment()
+    app = None
 
-        # Prepare Gemini AI
-        gemini_initialize()
+    try:
+        # Start scheduler in background thread
+        scheduler_thread = threading.Thread(target=run_scheduler, daemon=True)
+        scheduler_thread.start()
+        logging.info("Scheduler thread started")
+
+        # Prepare files and load them to Gemini AI
+        pull_and_update()
 
         # Initialize the Telegram bot
         logging.debug("Building the Telegram bot")
-        app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).concurrent_updates(True).build()
+        app = ApplicationBuilder().token(state.TELEGRAM_BOT_TOKEN).build()
 
         # Register handlers
         logging.debug("Registering the /start command handler")
         app.add_handler(CommandHandler("start", handle_start))
         logging.debug("Registering the messages handler")
         app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+        logging.debug("Registering the error handler")
+        app.add_error_handler(handle_telegram_error)
 
         # Run the bot
         logging.info("Initialization completed, bot is now running...")
         app.run_polling()
 
+    except TelegramFloodControlException as flood_exception:
+        logging.critical("Telegram flood control exception detected: %s", flood_exception)
+        logging.critical("Initiating container restart due to flood control...")
+        
+        # Clean shutdown
+        if app is not None:
+            try:
+                app.stop()
+                logging.info("Bot application stopped gracefully")
+            except Exception as stop_exception:
+                logging.error("Error stopping bot application: %s", stop_exception)
+        
+        # Exit with specific code that can trigger container restart
+        try:
+            delay_seconds = int(state.TELEGRAM_RESTART_DELAY_SECONDS)
+            if delay_seconds > 0:
+                logging.critical("Delaying restart by %s seconds", delay_seconds)
+                time.sleep(delay_seconds)
+        except (TypeError, ValueError):
+            logging.warning("Invalid TELEGRAM_RESTART_DELAY_SECONDS [%s], skipping delay", state.TELEGRAM_RESTART_DELAY_SECONDS)
+        logging.critical("Exiting with code 2 to trigger container restart")
+        sys.exit(2)
+        
     except Exception as e:
+        # Check if the exception contains flood control messages
+        error_message = str(e)
+        if "Flood control exceeded" in error_message and ("Network Retry Loop" in error_message or "Polling Updates" in error_message):
+            logging.critical("Flood control detected in main exception: %s", error_message)
+            logging.critical("Initiating container restart due to flood control...")
+            
+            # Clean shutdown
+            if app is not None:
+                try:
+                    app.stop()
+                    logging.info("Bot application stopped gracefully")
+                except Exception as stop_exception:
+                    logging.error("Error stopping bot application: %s", stop_exception)
+            
+            # Exit with specific code that can trigger container restart
+            try:
+                delay_seconds = int(state.TELEGRAM_RESTART_DELAY_SECONDS)
+                if delay_seconds > 0:
+                    logging.critical("Delaying restart by %s seconds", delay_seconds)
+                    time.sleep(delay_seconds)
+            except (TypeError, ValueError):
+                logging.warning("Invalid TELEGRAM_RESTART_DELAY_SECONDS [%s], skipping delay", state.TELEGRAM_RESTART_DELAY_SECONDS)
+            logging.critical("Exiting with code 2 to trigger container restart")
+            sys.exit(2)
+            
         logging.critical("Bot encountered an error: %s", e)
+        if app is not None:
+            app.stop()
         raise
 
-    finally:
-        logging.warning("Sleeping 5 seconds before exiting the bot")
-        time.sleep(5)
-
 if __name__ == "__main__":
-    configure_logging()
-    main()
+    try:
+        # Configure logging
+        configure_logging()
+
+        # Load the environment variables
+        load_environment()
+
+        # Run main async function
+        main()
+
+    except KeyboardInterrupt:
+        logging.info("Bot stopped by user")
+    except Exception as e:
+        logging.critical("Bot encountered an error (%s), exiting...", e)
+    finally:
+        logging.info("Bot shutdown complete")
