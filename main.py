@@ -18,8 +18,6 @@ from modules.repos import pull_and_update
 from modules.telegram import handle_start, handle_message, handle_telegram_error
 from modules import state
 
-# Main code
-
 
 def load_environment() -> None:
     """Environment secrets are loaded using the .env file or straight from the system"""
@@ -138,8 +136,9 @@ def main():
         # Clean shutdown
         if app is not None:
             try:
-                app.stop()
+                _ = app.stop()
                 logging.info("Bot application stopped gracefully")
+
             except Exception as stop_exception:
                 logging.error("Error stopping bot application: %s", stop_exception)
 
@@ -149,6 +148,7 @@ def main():
             if delay_seconds > 0:
                 logging.critical("Delaying restart by %s seconds", delay_seconds)
                 time.sleep(delay_seconds)
+
         except (TypeError, ValueError):
             logging.warning("Invalid TELEGRAM_RESTART_DELAY_SECONDS [%s], skipping delay", state.TELEGRAM_RESTART_DELAY_SECONDS)
         logging.critical("Exiting with code 2 to trigger container restart")
@@ -164,7 +164,7 @@ def main():
             # Clean shutdown
             if app is not None:
                 try:
-                    app.stop()
+                    _ = app.stop()
                     logging.info("Bot application stopped gracefully")
                 except Exception as stop_exception:
                     logging.error("Error stopping bot application: %s", stop_exception)
@@ -175,6 +175,7 @@ def main():
                 if delay_seconds > 0:
                     logging.critical("Delaying restart by %s seconds", delay_seconds)
                     time.sleep(delay_seconds)
+
             except (TypeError, ValueError):
                 logging.warning("Invalid TELEGRAM_RESTART_DELAY_SECONDS [%s], skipping delay", state.TELEGRAM_RESTART_DELAY_SECONDS)
             logging.critical("Exiting with code 2 to trigger container restart")
@@ -182,7 +183,7 @@ def main():
 
         logging.critical("Bot encountered an error: %s", e)
         if app is not None:
-            app.stop()
+            _ = app.stop()
         raise
 
 
