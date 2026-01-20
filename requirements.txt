@@ -1,7 +1,7 @@
-python-telegram-bot 
-python-dotenv 
-google-genai
-GitPython
-schedule
-matplotlib
-pillow
+python-telegram-bot==22.5
+python-dotenv==1.2.1
+google-genai==1.59.0
+GitPython==3.1.46
+schedule==1.2.2
+matplotlib==3.10.8
+pillow==12.1.0
