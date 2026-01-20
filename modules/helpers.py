@@ -210,7 +210,7 @@ def render_latex_to_png_bytes(latex: str, fontsize: int = 14, dpi: int = 200) ->
         text = fig.text(0, 0, f"${latex}$", fontsize=fontsize)
         fig.canvas.draw()
         bbox = text.get_window_extent()
-        width, height = bbox.size / dpi
+        width, height = bbox.width / dpi, bbox.height / dpi
         fig.set_size_inches((width, height))
         buf = io.BytesIO()
         fig.savefig(buf, format="png", dpi=dpi, bbox_inches="tight", pad_inches=0.1, transparent=True)

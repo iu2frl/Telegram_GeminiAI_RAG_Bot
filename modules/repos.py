@@ -1,3 +1,6 @@
+"""
+Repository management functions for cloning, pulling, and listing files.
+"""
 
 import logging
 import os
@@ -5,6 +8,7 @@ import shutil
 import time
 
 import git
+from modules.gemini import gemini_initialize
 
 from modules import state
 
@@ -80,10 +84,9 @@ def pull_and_update():
     try:
         clone_or_pull_repo()
         state.RELOADING_GEMINI = True
-        from modules.gemini import gemini_initialize
+
         gemini_initialize()
     except Exception as e:
         logging.critical("Failed to update the repository and reload Gemini AI: %s", e)
     finally:
         state.RELOADING_GEMINI = False
-

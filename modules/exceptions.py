@@ -1,3 +1,7 @@
+"""
+Module defining custom exceptions for Gemini AI operations.
+"""
+
 # Custom exceptions
 class GeminiModelCreationException(BaseException):
     """Used to identify errors from Gemini"""

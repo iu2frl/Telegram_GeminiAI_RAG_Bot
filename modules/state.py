@@ -1,4 +1,5 @@
 """Shared runtime state across modules."""
+from google.genai import Client, types
 
 # Global configuration/state values
 TELEGRAM_BOT_TOKEN = ""
@@ -14,5 +15,5 @@ TELEGRAM_RESTART_DELAY_SECONDS = ""
 
 # Working variables
 RELOADING_GEMINI = False
-uploaded_files = []
-GEMINI_CLIENT = None
+UploadedFiles: list[types.File] = []
+GEMINI_CLIENT: Client = Client()

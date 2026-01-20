@@ -20,6 +20,7 @@ from modules import state
 
 # Main code
 
+
 def load_environment() -> None:
     """Environment secrets are loaded using the .env file or straight from the system"""
 
@@ -36,7 +37,7 @@ def load_environment() -> None:
     state.BUILD_DATE = os.getenv("BUILD_DATE", "Unknown")
     state.REPO_URL = os.getenv("REPO_URL", "")
     state.TELEGRAM_RESTART_DELAY_SECONDS = os.getenv("TELEGRAM_RESTART_DELAY_SECONDS", "15")
-    
+
     try:
         delay_seconds = int(state.TELEGRAM_RESTART_DELAY_SECONDS)
         if delay_seconds < 0:
@@ -87,6 +88,7 @@ def load_environment() -> None:
     logging.info("Docker image build date: %s", state.BUILD_DATE)
     logging.info("Restart delay on flood control: %s seconds", state.TELEGRAM_RESTART_DELAY_SECONDS)
 
+
 def run_scheduler():
     """Runs the scheduler in a separate thread"""
     logging.info("Starting scheduler thread...")
@@ -96,6 +98,7 @@ def run_scheduler():
     while True:
         schedule.run_pending()
         time.sleep(1)
+
 
 def main():
     """Main routine of the robot"""
@@ -131,7 +134,7 @@ def main():
     except TelegramFloodControlException as flood_exception:
         logging.critical("Telegram flood control exception detected: %s", flood_exception)
         logging.critical("Initiating container restart due to flood control...")
-        
+
         # Clean shutdown
         if app is not None:
             try:
@@ -139,7 +142,7 @@ def main():
                 logging.info("Bot application stopped gracefully")
             except Exception as stop_exception:
                 logging.error("Error stopping bot application: %s", stop_exception)
-        
+
         # Exit with specific code that can trigger container restart
         try:
             delay_seconds = int(state.TELEGRAM_RESTART_DELAY_SECONDS)
@@ -150,14 +153,14 @@ def main():
             logging.warning("Invalid TELEGRAM_RESTART_DELAY_SECONDS [%s], skipping delay", state.TELEGRAM_RESTART_DELAY_SECONDS)
         logging.critical("Exiting with code 2 to trigger container restart")
         sys.exit(2)
-        
+
     except Exception as e:
         # Check if the exception contains flood control messages
         error_message = str(e)
         if "Flood control exceeded" in error_message and ("Network Retry Loop" in error_message or "Polling Updates" in error_message):
             logging.critical("Flood control detected in main exception: %s", error_message)
             logging.critical("Initiating container restart due to flood control...")
-            
+
             # Clean shutdown
             if app is not None:
                 try:
@@ -165,7 +168,7 @@ def main():
                     logging.info("Bot application stopped gracefully")
                 except Exception as stop_exception:
                     logging.error("Error stopping bot application: %s", stop_exception)
-            
+
             # Exit with specific code that can trigger container restart
             try:
                 delay_seconds = int(state.TELEGRAM_RESTART_DELAY_SECONDS)
@@ -176,11 +179,12 @@ def main():
                 logging.warning("Invalid TELEGRAM_RESTART_DELAY_SECONDS [%s], skipping delay", state.TELEGRAM_RESTART_DELAY_SECONDS)
             logging.critical("Exiting with code 2 to trigger container restart")
             sys.exit(2)
-            
+
         logging.critical("Bot encountered an error: %s", e)
         if app is not None:
             app.stop()
         raise
+
 
 if __name__ == "__main__":
     try:

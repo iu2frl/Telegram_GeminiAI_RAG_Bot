@@ -1,3 +1,6 @@
+"""
+Telegram bot handlers and message processing.
+"""
 
 import asyncio
 import logging
@@ -21,12 +24,31 @@ from modules.helpers import (
 
 async def handle_start(update: Update, _context: ContextTypes.DEFAULT_TYPE):
     """Handles the /start command."""
-    logging.info("Received /start command from user: [%s], id: [%s]", update.effective_sender.name, update.effective_user.id)
+
+    if update.effective_user is None:
+        logging.warning("Received /start command with no effective user")
+        return
+
+    logging.info("Received /start command from user: [%s], id: [%s]", update.effective_user.name, update.effective_user.id)
+
+    if update.message is None:
+        logging.warning("Received /start command with no message")
+        return
+
     await update.message.reply_text("Hello! Send me a message with your question, and I'll do my best to help you!")
 
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Processes user messages and replies with the PDF query result."""
+
+    if update.effective_user is None:
+        logging.warning("Received message with no effective user")
+        return
+
+    if update.message is None or update.message.text is None:
+        logging.warning("Received message with no text from user: [%s]", update.effective_user.id)
+        return
+
     user_message_content = str(update.message.text)
     user_id = update.effective_user.id
     chat_id = update.message.chat_id
@@ -36,7 +58,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Message is coming from a group
         user_message_content = user_message_content.lstrip()
         bot_name = state.TELEGRAM_BOT_NAME or ""
-        if bot_name.startswith("@"): 
+        if bot_name.startswith("@"):
             bot_name = bot_name[1:]
         mention_variants = {bot_name, f"@{bot_name}"} if bot_name else set()
 
@@ -82,6 +104,15 @@ async def bot_reply_to_message(update: Update, context: ContextTypes.DEFAULT_TYP
     This routine handles the cleaned request from the user and passes it to the Gemini APIs.
     Result is then sent to the user
     """
+
+    if update.effective_user is None:
+        logging.warning("Cannot reply to message: no effective user")
+        return
+
+    if update.message is None:
+        logging.warning("Cannot reply to message: no message found")
+        return
+
     user_id = update.effective_user.id
     chat_id = update.message.chat_id
 
@@ -239,19 +270,23 @@ async def bot_edit_text(context, chat_id, message_id, text: str):
                     await context.bot.send_message(chat_id=chat_id, text=chunk, parse_mode="MarkdownV2")
     except RetryAfter as retry_exception:
         # Handle flood control specifically
-        retry_seconds = retry_exception.retry_after
+        if retry_exception.retry_after is None:
+            logging.error("RetryAfter exception without retry_after value")
+            raise
+
+        retry_seconds = parse_retry_seconds(retry_exception.retry_after)
+
         logging.warning("Telegram flood control triggered. Retry after %s seconds", retry_seconds)
-        
+
         # Check if this is the specific flood control error from the Network Retry Loop
         error_message = str(retry_exception)
         if "Flood control exceeded" in error_message and "Network Retry Loop" in error_message:
             logging.critical("Network Retry Loop flood control detected: %s", error_message)
-            raise TelegramFloodControlException(
-                f"Flood control exceeded in Network Retry Loop: {error_message}"
-            ) from retry_exception
-        
+            raise TelegramFloodControlException(f"Flood control exceeded in Network Retry Loop: {error_message}") from retry_exception
+
         # For regular flood control, wait and retry
         await asyncio.sleep(retry_seconds + 1)  # Add 1 second buffer
+
         try:
             chunks = _split_telegram_message(escaped_text)
             await context.bot.edit_message_text(chat_id=chat_id, message_id=message_id, text=chunks[0], parse_mode="MarkdownV2")
@@ -260,37 +295,38 @@ async def bot_edit_text(context, chat_id, message_id, text: str):
         except Exception as retry_edit_exception:
             logging.error("Failed to edit message after flood control retry: %s", retry_edit_exception)
             raise
+
     except BadRequest as bad_request_exception:
         if "Message is not modified" in str(bad_request_exception):
             logging.debug("Skipping edit: message is not modified")
             return
         logging.error("Bad request while editing message: %s", bad_request_exception)
         raise
+
     except NetworkError as network_exception:
         # Check for flood control in network errors
         error_message = str(network_exception)
         if "Flood control exceeded" in error_message:
             logging.critical("Network-level flood control detected: %s", error_message)
-            raise TelegramFloodControlException(
-                f"Network flood control exceeded: {error_message}"
-            ) from network_exception
+            raise TelegramFloodControlException(f"Network flood control exceeded: {error_message}") from network_exception
         logging.error("Network error while editing message: %s", network_exception)
         raise
+
     except Exception as ret_exception:
         # Check for flood control in generic exceptions
         error_message = str(ret_exception)
         if "Flood control exceeded" in error_message and ("Network Retry Loop" in error_message or "Polling Updates" in error_message):
             logging.critical("Flood control detected in polling/network retry loop: %s", error_message)
-            raise TelegramFloodControlException(
-                f"Flood control in polling loop: {error_message}"
-            ) from ret_exception
-            
+            raise TelegramFloodControlException(f"Flood control in polling loop: {error_message}") from ret_exception
+
         logging.error("Failed to edit message: %s", ret_exception)
+
         try:
             # Fallback to plain text if MarkdownV2 fails
             logging.debug("Trying to edit message with plain text")
             text = remove_markdown(text).strip()
             await context.bot.edit_message_text(chat_id=chat_id, message_id=message_id, text=text)
+
         except Exception as edit_exception:
             logging.error("Failed to edit message with fallback: %s", edit_exception)
             try:
@@ -303,19 +339,18 @@ async def bot_send_message(context, chat_id, message):
     """Send a message to the user"""
     try:
         await context.bot.send_message(chat_id, message)
+
     except RetryAfter as retry_exception:
         # Handle flood control specifically
-        retry_seconds = retry_exception.retry_after
+        retry_seconds = parse_retry_seconds(retry_exception.retry_after)
         logging.warning("Telegram flood control triggered in send_message. Retry after %s seconds", retry_seconds)
-        
+
         # Check if this is the specific flood control error from the Network Retry Loop
         error_message = str(retry_exception)
         if "Flood control exceeded" in error_message and "Network Retry Loop" in error_message:
             logging.critical("Network Retry Loop flood control detected in send_message: %s", error_message)
-            raise TelegramFloodControlException(
-                f"Flood control exceeded in Network Retry Loop: {error_message}"
-            ) from retry_exception
-        
+            raise TelegramFloodControlException(f"Flood control exceeded in Network Retry Loop: {error_message}") from retry_exception
+
         # For regular flood control, wait and retry
         await asyncio.sleep(retry_seconds + 1)  # Add 1 second buffer
         try:
@@ -323,35 +358,52 @@ async def bot_send_message(context, chat_id, message):
         except Exception as retry_send_exception:
             logging.error("Failed to send message after flood control retry: %s", retry_send_exception)
             raise
+
     except NetworkError as network_exception:
         # Check for flood control in network errors
         error_message = str(network_exception)
         if "Flood control exceeded" in error_message:
             logging.critical("Network-level flood control detected in send_message: %s", error_message)
-            raise TelegramFloodControlException(
-                f"Network flood control exceeded: {error_message}"
-            ) from network_exception
+            raise TelegramFloodControlException(f"Network flood control exceeded: {error_message}") from network_exception
         logging.error("Network error while sending message: %s", network_exception)
         raise
+
     except Exception as send_exception:
         # Check for flood control in generic exceptions
         error_message = str(send_exception)
         if "Flood control exceeded" in error_message and ("Network Retry Loop" in error_message or "Polling Updates" in error_message):
             logging.critical("Flood control detected in send_message polling/network retry loop: %s", error_message)
-            raise TelegramFloodControlException(
-                f"Flood control in polling loop: {error_message}"
-            ) from send_exception
+            raise TelegramFloodControlException(f"Flood control in polling loop: {error_message}") from send_exception
         logging.error("Error sending message: %s", send_exception)
         raise
 
 
 async def handle_telegram_error(_update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Centralized error handler for Telegram polling issues."""
+
     error = context.error
+
     if isinstance(error, Conflict):
         logging.critical("Telegram Conflict: %s", error)
         raise TelegramFloodControlException("Another bot instance is running. Restart to recover.")
+
     if isinstance(error, NetworkError):
         logging.error("Telegram NetworkError: %s", error)
         return
+
     logging.exception("Unhandled Telegram error: %s", error)
+
+
+def parse_retry_seconds(retry_after) -> int:
+    """Parses the retry_after value to an integer number of seconds."""
+    if retry_after is None:
+        logging.error("RetryAfter exception without retry_after value")
+        raise ValueError("retry_after is None")
+
+    if isinstance(retry_after, int):
+        return retry_after
+    try:
+        return int(retry_after)
+    except (TypeError, ValueError) as exc:
+        logging.error("Invalid retry_after value: %s", retry_after)
+        raise ValueError(f"Invalid retry_after value: {retry_after}") from exc
