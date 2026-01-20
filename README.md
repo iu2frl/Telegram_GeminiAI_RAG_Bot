@@ -101,7 +101,8 @@ For detailed error messages, check the logs.
 
 1. Clone the repo
 1. Build the container with `docker build -t notebook-lm-bot:latest .`
-1. Create the `docker-compose.yml` file containing:
+1. Create the `docker-compose.yml` file containing the text below
+1. Start the container with `docker compose up`
 
 ```yaml
 services:
@@ -123,5 +124,3 @@ services:
               cpus: '1'
               memory: 256M
 ```
-
-1. Start the container with `docker compose up`
