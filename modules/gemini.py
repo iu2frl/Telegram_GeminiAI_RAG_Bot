@@ -87,7 +87,9 @@ def gemini_initialize() -> None:
 
 async def gemini_query_sources(user_request: str) -> str:
     """Queries the uploaded PDFs with the given prompt."""
-    instruction = f"You are `{state.TELEGRAM_BOT_NAME}`, a chatbot that can only answer to users request based solely on the source documents. Reply to the following message using the same language, when returning LaTex formulas, try to translate them to simple text if possible."
+    instruction = f"You are `{state.TELEGRAM_BOT_NAME}`, a chatbot that can only answer to users request based solely on the source documents."
+    instruction += " Reply to the following message using the same language in a short but complete manner."
+    instruction += " When returning LaTex formulas, try to translate them to simple text if possible."
     user_request = f"{instruction}:\n\n`{user_request}`"
     logging.debug("Generated prompt: [%s]", user_request)
 
