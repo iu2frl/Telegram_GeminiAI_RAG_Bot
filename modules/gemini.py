@@ -5,9 +5,9 @@ Gemini AI integration module.
 import logging
 import os
 import mimetypes
+from datetime import datetime, timezone
 
 from google import genai
-from google.genai import types
 
 from modules import state
 from modules.exceptions import (
@@ -17,6 +17,7 @@ from modules.exceptions import (
     GeminiRagUploadException,
 )
 from modules.repos import clone_or_pull_repo, list_files_in_folder
+from modules.state import GenAiModel
 
 mimetypes.add_type("text/markdown", ".md")
 
@@ -84,30 +85,88 @@ def gemini_initialize() -> None:
         raise GeminiRagUploadException("No valid files could be uploaded to Gemini AI")
 
 
-async def gemini_query_sources(user_request) -> str:
+async def gemini_query_sources(user_request: str) -> str:
     """Queries the uploaded PDFs with the given prompt."""
     instruction = f"You are `{state.TELEGRAM_BOT_NAME}`, a chatbot that can only answer to users request based solely on the source documents. Reply to the following message using the same language, when returning LaTex formulas, try to translate them to simple text if possible."
     user_request = f"{instruction}:\n\n`{user_request}`"
     logging.debug("Generated prompt: [%s]", user_request)
 
     try:
-        # Create the model config
-        model_config = types.GenerateContentConfig(
-            candidate_count=1,
-            temperature=1,
-            top_p=0.95,
-            top_k=40,
-            max_output_tokens=4096,
-        )
+        if (state.GOOGLE_API_MODEL.lower() == "auto") or (state.GOOGLE_API_MODEL.strip() == ""):
+            response_text = await gemini_generate_content_auto_model(user_request)
+        else:
+            response_text = await gemini_generate_content_fixed_model(user_request)
 
-        response = await state.GEMINI_CLIENT.aio.models.generate_content(model=state.GOOGLE_API_MODEL, contents=[*state.UploadedFiles, user_request], config=model_config)
-
-        if not response or not response.text:
-            raise GeminiQueryException("Received empty response from Gemini API")
-
-        response_text = response.text.strip()
         logging.info("Successfully retrieved [%i] characters response from Gemini API", len(response_text))
         return response_text
     except Exception as e:
         logging.error("Failed to query Gemini API: %s", e)
         raise GeminiQueryException(e) from e
+
+
+async def gemini_generate_content_fixed_model(user_request: str) -> str:
+    """Generates content using Gemini AI and custom settings."""
+
+    response = ""
+
+    try:
+        logging.debug("Using fixed Gemini model [%s] for the request", state.GOOGLE_API_MODEL)
+        response, token_count = await _gemini_generate_content(user_request, state.GOOGLE_API_MODEL)
+        logging.info("Gemini API call to [%s] used %i tokens", state.GOOGLE_API_MODEL, token_count)
+    except Exception as e:
+        logging.error("Failed to generate content with fixed model: %s", e)
+        raise GeminiQueryException(e) from e
+
+    return response
+
+
+async def gemini_generate_content_auto_model(user_request: str) -> str:
+    """Generates content using Gemini AI with automatic model selection."""
+
+    # Check if the model is available
+    if not state.MODELS_LIST or len(state.MODELS_LIST) == 0:
+        raise GeminiQueryException("No Gemini models are configured for automatic selection")
+
+    model_to_use: GenAiModel = state.MODELS_LIST[0]  # Default to the first model
+
+    for model in state.MODELS_LIST:
+        if model.is_available():
+            model_to_use = model
+            break
+
+    logging.debug("Selected Gemini model [%s] for the request", model_to_use.name)
+    request_timestamp = datetime.now(tz=timezone.utc)
+    token_count = 0
+    response = ""
+
+    try:
+        response, token_count = await _gemini_generate_content(user_request, model_to_use.name)
+        logging.info("Gemini API call to [%s] used %i tokens", model_to_use.name, token_count)
+
+    except Exception as e:
+        logging.error("Failed to get response from Gemini API: %s", e)
+        raise GeminiQueryException(e) from e
+
+    finally:
+        # Log the request for rate limiting
+        model_to_use.add_request(timestamp=request_timestamp, token_count=token_count)
+        logging.info("Model [%s] request log updated. RPM: [%i], TPM: [%i], RPD: [%i]",
+                     model_to_use.name, model_to_use.get_rpm(), model_to_use.get_tpm(), model_to_use.get_rpd())
+
+    return response
+
+async def _gemini_generate_content(user_request: str, model: str) -> tuple[str, int]:
+    """Generates content using Gemini AI and returns the response along with token count."""
+
+    response = await state.GEMINI_CLIENT.aio.models.generate_content(model=model, contents=[*state.UploadedFiles, user_request], config=state.MODEL_CONFIG)
+
+    # Get the number of tokens used
+    token_count = 0
+    if response.usage_metadata and response.usage_metadata.total_token_count:
+        token_count = response.usage_metadata.total_token_count
+        logging.debug("Gemini API used %i tokens", token_count)
+
+    if not response or not response.text or len(response.text.strip()) <= 1:
+        raise GeminiQueryException("Received empty response from Gemini API")
+
+    return response.text.strip(), token_count
