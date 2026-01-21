@@ -8,6 +8,14 @@ This bot is an AI-powered assistant that uses Google's Gemini AI to process user
 - Utilizes Google Gemini AI for natural language understanding and document-based querying.
 - Handles Telegram messages and commands.
 - Supports MarkdownV2 formatting for responses.
+- Supports dynamic loading of documents from a specified GitHub repository.
+- Supports rate limit handling for Gemini API models when using free-tier accounts (only if `GOOGLE_API_MODEL` is set to `auto`).
+
+> [!WARNING]
+> If the `GOOGLE_API_MODEL` environment variable is set to a specific model name (e.g., `gemini-2.0-flash`), the bot will not monitor rate limits automatically. This may lead to unexpected costs or rate limiting issues.
+
+> [!WARNING]
+> The list of supported free-tier Gemini models may change over time. Please refer to the [official documentation](https://ai.google.dev/gemini-api/docs/deprecations) for the most up-to-date information. If a model expires, it can no longer be used by the bot until the code in `modules/state.py` is updated.
 
 ## Prerequisites
 
