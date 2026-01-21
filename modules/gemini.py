@@ -129,12 +129,16 @@ async def gemini_generate_content_auto_model(user_request: str) -> str:
     if not state.MODELS_LIST or len(state.MODELS_LIST) == 0:
         raise GeminiQueryException("No Gemini models are configured for automatic selection")
 
-    model_to_use: GenAiModel = state.MODELS_LIST[0]  # Default to the first model
+    model_to_use: GenAiModel | None = None
 
     for model in state.MODELS_LIST:
         if model.is_available():
             model_to_use = model
             break
+
+    if not model_to_use:
+        logging.warning("No Gemini model is currently available due to rate limiting")
+        return "Service is currently unavailable due to high demand. Please try again later."
 
     logging.debug("Selected Gemini model [%s] for the request", model_to_use.name)
     request_timestamp = datetime.now(tz=timezone.utc)

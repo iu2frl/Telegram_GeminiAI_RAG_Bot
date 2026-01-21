@@ -76,9 +76,10 @@ def load_environment() -> None:
 
     if not state.GOOGLE_API_MODEL:
         logging.warning("Missing GOOGLE_API_MODEL in the environment variables, using default.")
-        state.GOOGLE_API_MODEL = "gemini-2.0-flash"
+        state.GOOGLE_API_MODEL = "auto"
     else:
         logging.info("Google API model %s loaded successfully.", state.GOOGLE_API_MODEL)
+        logging.warning("Using manual model selection will not monitor rate limits automatically, this may lead to unexpected costs or rate limiting issues.")
 
     logging.info("Using Gemini API model: %s", state.GOOGLE_API_MODEL)
     logging.info("Maximum Gemini API attempts: %s", state.GOOGLE_API_MAX_ATTEMPTS)
