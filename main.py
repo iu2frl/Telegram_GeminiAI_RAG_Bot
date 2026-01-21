@@ -75,7 +75,7 @@ def load_environment() -> None:
         logging.info("Repository URL loaded successfully.")
 
     if not state.GOOGLE_API_MODEL:
-        logging.warning("Missing GOOGLE_API_MODEL in the environment variables, using default.")
+        logging.warning("Missing GOOGLE_API_MODEL in the environment variables, using automatic selection.")
         state.GOOGLE_API_MODEL = "auto"
     else:
         logging.info("Google API model %s loaded successfully.", state.GOOGLE_API_MODEL)
