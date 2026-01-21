@@ -52,7 +52,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_message_content = str(update.message.text)
     user_id = update.effective_user.id
     chat_id = update.message.chat_id
-    logging.debug("Received message from user [%s] from chat_id: [%s]", user_id, chat_id)
+    user_name = update.effective_user.full_name or "Unknown"
+    logging.debug("Received message from user [%s] (%s) from chat_id: [%s]", user_id, user_name, chat_id)
 
     if chat_id <= 0:
         # Message is coming from a group
@@ -93,7 +94,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logging.warning("Warning: Message from user [%s] from chat_id [%s] is lengthy", user_id, chat_id)
         await update.message.reply_text("Your message is lengthy, please consider shortening it for better responses.")
 
-    logging.info("Processing valid message from user [%s] from chat_id [%s], content: %s", user_id, chat_id, user_message_content)
+    logging.info("Processing valid message from user [%s] (%s) from chat_id [%s], content: %s", user_id, user_name, chat_id, user_message_content)
 
     # Send the cleaned request to the AI
     await bot_reply_to_message(update, context, user_message_content.strip())
