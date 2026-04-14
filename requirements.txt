@@ -4,4 +4,4 @@ google-genai==1.59.0
 GitPython==3.1.46
 schedule==1.2.2
 matplotlib==3.10.8
-pillow==12.1.1
+pillow==12.2.0
