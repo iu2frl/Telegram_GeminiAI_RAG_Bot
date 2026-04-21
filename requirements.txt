@@ -1,5 +1,5 @@
 python-telegram-bot==22.5
-python-dotenv==1.2.1
+python-dotenv==1.2.2
 google-genai==1.59.0
 GitPython==3.1.46
 schedule==1.2.2
