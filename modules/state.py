@@ -91,7 +91,7 @@ class GenAiModel:
 
 # Usage limits based on https://aistudio.google.com/usage?timeRange=last-7-days
 MODELS_LIST: list[GenAiModel] = [
-    GenAiModel("gemini-2.5-flash-lite", max_rpm=10, max_tpm=250000, max_rpd=20),
-    GenAiModel("gemini-2.5-flash", max_rpm=5, max_tpm=250000, max_rpd=20),
+    GenAiModel("gemini-3.1-flash-lite", max_rpm=15, max_tpm=250000, max_rpd=500),
+    GenAiModel("gemini-3.5-flash", max_rpm=5, max_tpm=250000, max_rpd=20),
     GenAiModel("gemini-3-flash", max_rpm=5, max_tpm=250000, max_rpd=20)
 ]
