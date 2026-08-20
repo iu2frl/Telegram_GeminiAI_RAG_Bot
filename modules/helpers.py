@@ -4,6 +4,21 @@ import re
 
 from html.parser import HTMLParser
 
+
+def markdown_to_telegram_html(text: str) -> str:
+    """Convert the small Markdown subset commonly returned by Gemini."""
+    if not text:
+        return ""
+
+    converted_lines: list[str] = []
+    for line in text.splitlines():
+        line = re.sub(r"^\s*[-+*]\s+", "• ", line)
+        line = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", line)
+        line = re.sub(r"__(.+?)__", r"<b>\1</b>", line)
+        converted_lines.append(line)
+    return "\n".join(converted_lines)
+
+
 def sanitize_telegram_html(text: str) -> str:
     """Keeps Telegram-supported HTML and escapes literal text safely."""
     if not text:

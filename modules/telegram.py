@@ -14,6 +14,7 @@ from modules.exceptions import GeminiQueryException, TelegramFloodControlExcepti
 from modules.gemini import gemini_initialize, gemini_query_sources
 from modules.helpers import (
     _split_telegram_html,
+    markdown_to_telegram_html,
     remove_markup,
     sanitize_telegram_html,
 )
@@ -246,7 +247,7 @@ async def bot_edit_text(context, chat_id, message_id, text: str, _allow_retry: b
     """
     try:
         logging.debug("Sending edited message")
-        formatted_text = sanitize_telegram_html(text).strip()
+        formatted_text = sanitize_telegram_html(markdown_to_telegram_html(text)).strip()
         chunks = _split_telegram_html(formatted_text)
         await context.bot.edit_message_text(
             chat_id=chat_id,

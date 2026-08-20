@@ -1,9 +1,23 @@
 import unittest
 
-from modules.helpers import _split_telegram_html, remove_markup, sanitize_telegram_html
+from modules.helpers import _split_telegram_html, markdown_to_telegram_html, remove_markup, sanitize_telegram_html
 
 
 class TelegramHtmlTests(unittest.TestCase):
+    def test_markdown_bold_is_converted(self):
+        self.assertEqual(
+            sanitize_telegram_html(markdown_to_telegram_html("**Bold text**")),
+            "<b>Bold text</b>",
+        )
+
+    def test_markdown_bullets_are_converted(self):
+        source = "* First item\n* **Second item**\n- Third item"
+
+        self.assertEqual(
+            sanitize_telegram_html(markdown_to_telegram_html(source)),
+            "• First item\n• <b>Second item</b>\n• Third item",
+        )
+
     def test_supported_tags_and_text_are_preserved(self):
         source = '<b>Answer</b> <i>carefully</i> <a href="https://example.com">source</a>'
 
