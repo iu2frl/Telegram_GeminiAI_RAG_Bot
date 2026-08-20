@@ -6,7 +6,7 @@ import logging
 import os
 import mimetypes
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from google import genai
 
@@ -24,7 +24,7 @@ from modules.prompt_security import build_safe_prompt, validate_prompt_safety
 mimetypes.add_type("text/markdown", ".md")
 
 
-def gemini_initialize() -> None:
+def gemini_initialize(update_repository: bool = True) -> None:
     """Initializes the Gemini AI parameters"""
 
     try:
@@ -50,8 +50,9 @@ def gemini_initialize() -> None:
     except Exception as e:
         logging.error("Failed to delete existing files on the cloud: %s", e)
 
-    # Clone or pull the repository
-    clone_or_pull_repo()
+    if update_repository:
+        # Clone or pull the repository when called outside the scheduled refresh flow.
+        clone_or_pull_repo()
 
     # List of file paths to upload as source
     try:
@@ -64,6 +65,7 @@ def gemini_initialize() -> None:
 
     # Make sure list is empty in case of new uploads
     state.UploadedFiles.clear()
+    state.GEMINI_FILES_EXPIRE_AT = None
 
     # Upload each file and store the uploaded file references
     for source_file in source_file_paths:
@@ -78,13 +80,45 @@ def gemini_initialize() -> None:
                 },
             )
             state.UploadedFiles.append(uploaded_file)
-            logging.debug("Source file [%s] uploaded successfully. Expire date: [%s]", source_file, uploaded_file.expiration_time)
+            expiration_time = _as_utc(getattr(uploaded_file, "expiration_time", None))
+            if expiration_time is not None and (
+                state.GEMINI_FILES_EXPIRE_AT is None
+                or expiration_time < state.GEMINI_FILES_EXPIRE_AT
+            ):
+                state.GEMINI_FILES_EXPIRE_AT = expiration_time
+            logging.debug("Source file [%s] uploaded successfully. Expire date: [%s]", source_file, expiration_time)
         except Exception as e:
             logging.warning("Failed to upload file [%s]: %s", source_file, e)
     if len(state.UploadedFiles) > 0:
         logging.info("Uploaded %i files to Gemini AI", len(state.UploadedFiles))
     else:
         raise GeminiRagUploadException("No valid files could be uploaded to Gemini AI")
+
+
+def _as_utc(value: datetime | str | None) -> datetime | None:
+    """Convert a Gemini expiration value to an aware UTC datetime."""
+    if value is None:
+        return None
+    if isinstance(value, str):
+        value = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def gemini_files_need_refresh(now: datetime | None = None) -> bool:
+    """Return whether uploaded files are absent or within the refresh margin."""
+    if now is None:
+        now = datetime.now(timezone.utc)
+    now = _as_utc(now)
+    if now is None:
+        return True
+
+    if not state.UploadedFiles or state.GEMINI_FILES_EXPIRE_AT is None:
+        return True
+
+    refresh_at = state.GEMINI_FILES_EXPIRE_AT - timedelta(seconds=state.GEMINI_FILE_REFRESH_MARGIN_SECONDS)
+    return now >= refresh_at
 
 
 async def gemini_query_sources(user_request: str) -> dict:

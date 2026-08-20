@@ -73,15 +73,41 @@ def list_files_in_folder(folder_path):
     return files_list
 
 
+def repository_has_updates() -> bool:
+    """Check the remote HEAD without fetching or modifying the local repository."""
+    if not os.path.exists(f"{state.LOCAL_REPO_PATH}/.git"):
+        return True
+
+    try:
+        repo = git.Repo(state.LOCAL_REPO_PATH)
+        local_commit = repo.head.commit.hexsha
+        remote_head = repo.git.ls_remote(state.REPO_URL, "HEAD").split()[0]
+        changed = local_commit != remote_head
+        logging.info("Repository remote check: changed=%s", changed)
+        return changed
+    except Exception as e:
+        # Refresh on an inconclusive check rather than risk serving stale files.
+        logging.warning("Could not compare repository commits, forcing refresh: %s", e)
+        return True
+
+
 def pull_and_update():
     """Pulls the latest changes from the repository and updates the Gemini AI"""
 
     with state.GEMINI_OPERATION_LOCK:
-        state.RELOADING_GEMINI = True
         try:
-            clone_or_pull_repo()
-            from modules.gemini import gemini_initialize
-            gemini_initialize()
+            from modules.gemini import gemini_files_need_refresh, gemini_initialize
+
+            repository_changed = repository_has_updates()
+            files_need_refresh = gemini_files_need_refresh()
+            if not repository_changed and not files_need_refresh and state.GEMINI_CLIENT is not None:
+                logging.info("Repository and Gemini files are current; skipping refresh")
+                return
+
+            state.RELOADING_GEMINI = True
+            if repository_changed:
+                clone_or_pull_repo()
+            gemini_initialize(update_repository=False)
         except Exception as e:
             logging.critical("Failed to update the repository and reload Gemini AI: %s", e)
         finally:

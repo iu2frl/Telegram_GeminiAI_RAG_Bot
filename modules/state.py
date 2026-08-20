@@ -20,6 +20,7 @@ REPO_URL = ""
 TELEGRAM_RESTART_DELAY_SECONDS = ""
 HEALTH_HOST = "0.0.0.0"
 HEALTH_PORT = 8080
+GEMINI_FILE_REFRESH_MARGIN_SECONDS = 3600
 
 # State variables
 LOCAL_REPO_PATH = "./sources"
@@ -30,6 +31,7 @@ RELOADING_GEMINI = False
 GEMINI_OPERATION_LOCK = threading.Lock()
 UploadedFiles: list[types.File] = []
 GEMINI_CLIENT: Client | None = None
+GEMINI_FILES_EXPIRE_AT: datetime | None = None
 HEALTH_READY = False
 
 # Model configuration
