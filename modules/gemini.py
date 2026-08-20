@@ -18,6 +18,7 @@ from modules.exceptions import (
 )
 from modules.repos import clone_or_pull_repo, list_files_in_folder
 from modules.state import GenAiModel
+from modules.prompt_security import build_safe_prompt, validate_prompt_safety
 
 mimetypes.add_type("text/markdown", ".md")
 
@@ -86,19 +87,24 @@ def gemini_initialize() -> None:
 
 
 async def gemini_query_sources(user_request: str) -> str:
-    """Queries the uploaded PDFs with the given prompt."""
-    instruction = f"You are `{state.TELEGRAM_BOT_NAME}`, a chatbot that can only answer to users request based solely on the source documents."
-    instruction += " Reply to the following message using the same language in a short but complete manner."
-    instruction += " Format the response using only Telegram HTML tags: <b>, <i>, <u>, <s>, <code>, <pre>, <blockquote>, and <a href=\"...\">. Do not use Markdown, tables, or unsupported HTML."
-    instruction += " If the source contains mathematical formulas, summarize their meaning in plain language only. Never return LaTeX, TeX, math delimiters, or the original formulas."
-    user_request = f"{instruction}:\n\n`{user_request}`"
-    logging.debug("Generated prompt: [%s]", user_request)
+    """
+    Queries the uploaded PDFs with the given prompt.
+    Uses safe templating to prevent prompt injection attacks.
+    """
+    # Build safe prompt using Jinja2 templating (prevents injection attacks)
+    prompt = build_safe_prompt(state.TELEGRAM_BOT_NAME, user_request)
+    
+    # Validate prompt safety (defense in depth)
+    if not validate_prompt_safety(prompt, user_request):
+        logging.warning("Prompt safety validation failed, but proceeding with caution")
+    
+    logging.debug("Generated prompt with %i characters", len(prompt))
 
     try:
         if (state.GOOGLE_API_MODEL.lower() == "auto") or (state.GOOGLE_API_MODEL.strip() == ""):
-            response_text = await gemini_generate_content_auto_model(user_request)
+            response_text = await gemini_generate_content_auto_model(prompt)
         else:
-            response_text = await gemini_generate_content_fixed_model(user_request)
+            response_text = await gemini_generate_content_fixed_model(prompt)
 
         logging.info("Successfully retrieved [%i] characters response from Gemini API", len(response_text))
         return response_text
