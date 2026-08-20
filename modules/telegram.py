@@ -18,6 +18,7 @@ from modules.helpers import (
     remove_markup,
     sanitize_telegram_html,
 )
+from modules.validation import validate_user_message
 
 
 async def handle_start(update: Update, _context: ContextTypes.DEFAULT_TYPE):
@@ -81,22 +82,27 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     break
             user_message_content = user_message_content.lstrip(" :,-")
 
-    user_message_content = user_message_content.strip()
+    validation_result = validate_user_message(user_message_content)
+    user_message_content = validation_result.value
 
-    if not user_message_content:
+    if validation_result.error == "empty":
         logging.debug("Ignoring empty message from user [%s] from chat_id [%s]", user_id, chat_id)
         return
 
-    if len(user_message_content) < 3:
+    if validation_result.error == "too_short":
         logging.debug("Ignoring too short message from user [%s] from chat_id [%s]", user_id, chat_id)
         return
 
-    if len(user_message_content) > 500:
+    if validation_result.error == "too_long":
         logging.warning("Ignoring too long message from user [%s] from chat_id [%s]", user_id, chat_id)
         await update.message.reply_text("Your message is too long, please shorten it and try again.")
         return
 
-    if len(user_message_content) > 400:
+    if not validation_result.valid:
+        logging.warning("Ignoring invalid message from user [%s] from chat_id [%s]", user_id, chat_id)
+        return
+
+    if validation_result.is_length_warning:
         logging.warning("Warning: Message from user [%s] from chat_id [%s] is lengthy", user_id, chat_id)
         await update.message.reply_text("Your message is lengthy, please consider shortening it for better responses.")
 
