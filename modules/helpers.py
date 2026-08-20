@@ -88,6 +88,8 @@ def sanitize_telegram_html(text: str) -> str:
     parser = TelegramHtmlParser()
     parser.feed(text)
     parser.close()
+    for tag in reversed(parser.open_tags):
+        parser.output.append(f"</{tag}>")
     return "".join(parser.output)
 
 

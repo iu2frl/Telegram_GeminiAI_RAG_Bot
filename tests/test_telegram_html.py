@@ -41,6 +41,43 @@ class TelegramHtmlTests(unittest.TestCase):
 
         self.assertEqual(sanitize_telegram_html(source), '<a>click</a>')
 
+    def test_nested_formatting_is_preserved(self):
+        source = '<b>Important <i>detail</i></b>'
+
+        self.assertEqual(
+            sanitize_telegram_html(source),
+            '<b>Important <i>detail</i></b>',
+        )
+
+    def test_supported_aliases_are_normalized(self):
+        source = '<strong>bold</strong> <em>italic</em> <del>removed</del>'
+
+        self.assertEqual(
+            sanitize_telegram_html(source),
+            '<b>bold</b> <i>italic</i> <s>removed</s>',
+        )
+
+    def test_link_attributes_other_than_safe_href_are_removed(self):
+        source = '<a class="source" target="_blank" href="https://example.com/?q=&quot;x&quot;">source</a>'
+
+        self.assertEqual(
+            sanitize_telegram_html(source),
+            '<a href="https://example.com/?q=&quot;x&quot;">source</a>',
+        )
+
+    def test_common_entities_are_not_double_escaped(self):
+        source = '&lt;quoted&gt; &amp; &#39;value&#39;'
+
+        self.assertEqual(
+            sanitize_telegram_html(source),
+            '&lt;quoted&gt; &amp; &#39;value&#39;',
+        )
+
+    def test_unclosed_tags_are_closed(self):
+        source = '<b>unfinished response'
+
+        self.assertEqual(sanitize_telegram_html(source), '<b>unfinished response</b>')
+
 
 if __name__ == "__main__":
     unittest.main()
