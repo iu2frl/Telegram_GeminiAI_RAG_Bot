@@ -19,12 +19,16 @@ RUN apk add --no-cache \
         openblas \
         ttf-dejavu
 
+RUN addgroup -S bot && adduser -S -G bot bot
+
 WORKDIR /home/bot
 COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
 COPY --from=builder /usr/local/bin /usr/local/bin
 COPY ./main.py .
 COPY ./modules ./modules
 COPY ./sources ./sources
+RUN chown -R bot:bot /home/bot
+USER bot
 EXPOSE 8080
 ENV GIT_PYTHON_REFRESH=quiet
 ARG BUILD_DATE=unknown
