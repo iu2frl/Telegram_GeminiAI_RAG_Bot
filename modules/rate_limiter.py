@@ -10,6 +10,7 @@ Uses hybrid approach: in-memory for speed + SQLite for persistence.
 
 import logging
 import sqlite3
+import threading
 import time
 from datetime import datetime, timedelta
 from typing import Optional, Tuple
@@ -35,6 +36,7 @@ class UserRateLimiter:
         self.db_path = db_path
         self.requests_per_minute = requests_per_minute
         self.tokens_per_minute = tokens_per_minute
+        self._db_lock = threading.Lock()
         
         # In-memory cache: {user_id: {timestamp, requests_count, tokens_count}}
         self.memory_cache = {}
@@ -46,8 +48,9 @@ class UserRateLimiter:
     def _init_db(self) -> None:
         """Initialize SQLite database for rate limit persistence."""
         try:
-            conn = sqlite3.connect(self.db_path)
+            conn = sqlite3.connect(self.db_path, timeout=30)
             cursor = conn.cursor()
+            cursor.execute("PRAGMA journal_mode=WAL")
             
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS rate_limits (
@@ -82,7 +85,7 @@ class UserRateLimiter:
     def _load_from_db(self, user_id: int) -> Optional[dict]:
         """Load user's rate limit data from database."""
         try:
-            conn = sqlite3.connect(self.db_path)
+            conn = sqlite3.connect(self.db_path, timeout=30)
             cursor = conn.cursor()
             
             cursor.execute(
@@ -105,28 +108,29 @@ class UserRateLimiter:
     
     def _save_to_db(self, user_id: int, data: dict) -> None:
         """Save user's rate limit data to database."""
-        try:
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
-            now = datetime.now().isoformat()
-            
-            cursor.execute(
-                """INSERT OR REPLACE INTO rate_limits 
-                   (user_id, last_request_minute, requests_count, tokens_count, created_at, updated_at)
-                   VALUES (?, ?, ?, ?, ?, ?)""",
-                (
-                    user_id,
-                    data["last_request_minute"],
-                    data["requests_count"],
-                    data["tokens_count"],
-                    now,  # created_at
-                    now,  # updated_at
+        with self._db_lock:
+            try:
+                conn = sqlite3.connect(self.db_path, timeout=30)
+                cursor = conn.cursor()
+                now = datetime.now().isoformat()
+                
+                cursor.execute(
+                    """INSERT OR REPLACE INTO rate_limits 
+                       (user_id, last_request_minute, requests_count, tokens_count, created_at, updated_at)
+                       VALUES (?, ?, ?, ?, ?, ?)""",
+                    (
+                        user_id,
+                        data["last_request_minute"],
+                        data["requests_count"],
+                        data["tokens_count"],
+                        now,  # created_at
+                        now,  # updated_at
+                    )
                 )
-            )
-            conn.commit()
-            conn.close()
-        except Exception as e:
-            logging.warning("Failed to save rate limit data to DB for user %s: %s", user_id, e)
+                conn.commit()
+                conn.close()
+            except Exception as e:
+                logging.warning("Failed to save rate limit data to DB for user %s: %s", user_id, e)
     
     def _cleanup_old_entries(self) -> None:
         """Remove entries older than 1 hour from database."""
