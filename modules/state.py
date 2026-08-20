@@ -1,6 +1,8 @@
 """Shared runtime state across modules."""
 
 from datetime import datetime, timezone
+import threading
+
 from google.genai import Client, types
 
 # Rate limiting configuration (per-minute limits per user)
@@ -23,6 +25,7 @@ BUILD_DATE = ""
 
 # Working variables
 RELOADING_GEMINI = False
+GEMINI_OPERATION_LOCK = threading.Lock()
 UploadedFiles: list[types.File] = []
 GEMINI_CLIENT: Client | None = None
 

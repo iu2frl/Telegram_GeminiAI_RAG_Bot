@@ -5,7 +5,6 @@ Repository management functions for cloning, pulling, and listing files.
 import logging
 import os
 import shutil
-import time
 
 import git
 
@@ -77,16 +76,13 @@ def list_files_in_folder(folder_path):
 def pull_and_update():
     """Pulls the latest changes from the repository and updates the Gemini AI"""
 
-    while state.RELOADING_GEMINI:
-        logging.info("Gemini API is being reloaded, waiting for it to complete...")
-        time.sleep(1)
-
-    try:
-        clone_or_pull_repo()
+    with state.GEMINI_OPERATION_LOCK:
         state.RELOADING_GEMINI = True
-        from modules.gemini import gemini_initialize
-        gemini_initialize()
-    except Exception as e:
-        logging.critical("Failed to update the repository and reload Gemini AI: %s", e)
-    finally:
-        state.RELOADING_GEMINI = False
+        try:
+            clone_or_pull_repo()
+            from modules.gemini import gemini_initialize
+            gemini_initialize()
+        except Exception as e:
+            logging.critical("Failed to update the repository and reload Gemini AI: %s", e)
+        finally:
+            state.RELOADING_GEMINI = False

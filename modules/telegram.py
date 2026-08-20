@@ -130,11 +130,8 @@ async def bot_reply_to_message(update: Update, context: ContextTypes.DEFAULT_TYP
     logging.debug("Sent placeholder message, waiting for AI to reply.")
 
     if state.RELOADING_GEMINI:
-        # If the Gemini API is being reloaded, wait for it to complete
         logging.info("Gemini API is being reloaded, waiting for it to complete.")
         await bot_edit_text(context, processing_message.chat_id, processing_message.message_id, "The source files on the server are being updated, please wait...")
-        while state.RELOADING_GEMINI:
-            await asyncio.sleep(1)
 
     # Query the Gemini API with a limited number of attempts (defined in the environment)
     logging.debug("User [%s] with ID [%i] asked: [%s]", update.effective_user.name, user_id, user_message_content)
@@ -200,13 +197,15 @@ async def bot_reply_to_message(update: Update, context: ContextTypes.DEFAULT_TYP
                         # If permission denied, files are expired, reload them
                         logging.warning("Files might be expired, need to reload them")
                         try:
-                            state.RELOADING_GEMINI = True
-                            gemini_initialize()
+                            with state.GEMINI_OPERATION_LOCK:
+                                state.RELOADING_GEMINI = True
+                                try:
+                                    gemini_initialize()
+                                finally:
+                                    state.RELOADING_GEMINI = False
                         except Exception as gemini_init_exception:
                             logging.critical("Failed to reload files, error: %s", gemini_init_exception)
                             last_error = f"Error reloading files: {str(gemini_init_exception)}"
-                        finally:
-                            state.RELOADING_GEMINI = False
                 else:
                     # Something bad happeneded and needs to be fixed
                     telegram_error_message = "Unexpected server error, please trying again later."

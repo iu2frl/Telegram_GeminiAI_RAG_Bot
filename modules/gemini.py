@@ -5,6 +5,7 @@ Gemini AI integration module.
 import logging
 import os
 import mimetypes
+import asyncio
 from datetime import datetime, timezone
 
 from google import genai
@@ -175,10 +176,18 @@ async def gemini_generate_content_auto_model(user_request: str) -> tuple[str, in
 async def _gemini_generate_content(user_request: str, model: str) -> tuple[str, int]:
     """Generates content using Gemini AI and returns the response along with token count."""
 
-    if state.GEMINI_CLIENT is None:
-        raise GeminiApiInitializeException("Gemini client is not initialized")
+    await asyncio.to_thread(state.GEMINI_OPERATION_LOCK.acquire)
+    try:
+        if state.GEMINI_CLIENT is None:
+            raise GeminiApiInitializeException("Gemini client is not initialized")
 
-    response = await state.GEMINI_CLIENT.aio.models.generate_content(model=model, contents=[*state.UploadedFiles, user_request], config=state.MODEL_CONFIG)
+        response = await state.GEMINI_CLIENT.aio.models.generate_content(
+            model=model,
+            contents=[*state.UploadedFiles, user_request],
+            config=state.MODEL_CONFIG,
+        )
+    finally:
+        state.GEMINI_OPERATION_LOCK.release()
 
     # Get the number of tokens used
     token_count = 0
