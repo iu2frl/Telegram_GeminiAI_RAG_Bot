@@ -1,9 +1,11 @@
 
 import io
+import html
 import re
 
 import matplotlib
 import matplotlib.pyplot as plt
+from html.parser import HTMLParser
 
 from telegram.helpers import escape_markdown
 
@@ -17,6 +19,76 @@ def escape_telegram_markdown(text: str) -> str:
     Escapes special characters in the text for Telegram MarkdownV2.
     """
     return escape_markdown(text, version=2)
+
+
+def sanitize_telegram_html(text: str) -> str:
+    """Keeps Telegram-supported HTML and escapes literal text safely."""
+    if not text:
+        return ""
+
+    tag_names = {
+        "b": "b",
+        "strong": "b",
+        "i": "i",
+        "em": "i",
+        "u": "u",
+        "ins": "u",
+        "s": "s",
+        "strike": "s",
+        "del": "s",
+        "tg-spoiler": "tg-spoiler",
+        "code": "code",
+        "pre": "pre",
+        "blockquote": "blockquote",
+        "a": "a",
+    }
+
+    class TelegramHtmlParser(HTMLParser):
+        def __init__(self) -> None:
+            super().__init__(convert_charrefs=False)
+            self.output: list[str] = []
+            self.open_tags: list[str] = []
+
+        def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+            normalized_tag = tag.lower()
+            telegram_tag = tag_names.get(normalized_tag)
+            if telegram_tag is None:
+                return
+
+            if telegram_tag == "a":
+                href = next((value for name, value in attrs if name.lower() == "href"), None)
+                if href is None or not href.lower().startswith(("http://", "https://", "tg://")):
+                    self.output.append("<a>")
+                else:
+                    self.output.append(f'<a href="{html.escape(href, quote=True)}">')
+            else:
+                self.output.append(f"<{telegram_tag}>")
+            self.open_tags.append(telegram_tag)
+
+        def handle_endtag(self, tag: str) -> None:
+            telegram_tag = tag_names.get(tag.lower())
+            if telegram_tag is None or telegram_tag not in self.open_tags:
+                return
+
+            self.output.append(f"</{telegram_tag}>")
+            self.open_tags.remove(telegram_tag)
+
+        def handle_data(self, data: str) -> None:
+            self.output.append(html.escape(data, quote=False))
+
+        def handle_entityref(self, name: str) -> None:
+            if name in {"lt", "gt", "amp", "quot"}:
+                self.output.append(f"&{name};")
+            else:
+                self.output.append(html.escape(f"&{name};", quote=False))
+
+        def handle_charref(self, name: str) -> None:
+            self.output.append(f"&#{name};")
+
+    parser = TelegramHtmlParser()
+    parser.feed(text)
+    parser.close()
+    return "".join(parser.output)
 
 
 def _format_markdown_v2(text: str) -> str:
