@@ -43,7 +43,7 @@ def gemini_initialize() -> None:
 
         # Delete existing files
         for file_to_delete in existing_files_on_cloud:
-            logging.info("Deleting old file [%s] uploaded on [%s] with hash [%s]", file_to_delete.name, file_to_delete.create_time, file_to_delete.sha256_hash)
+            logging.debug("Deleting old file [%s] uploaded on [%s] with hash [%s]", file_to_delete.name, file_to_delete.create_time, file_to_delete.sha256_hash)
             state.GEMINI_CLIENT.files.delete(name=str(file_to_delete.name))
             logging.debug("File [%s] was deleted", file_to_delete.name)
     except Exception as e:
@@ -67,7 +67,7 @@ def gemini_initialize() -> None:
     # Upload each file and store the uploaded file references
     for source_file in source_file_paths:
         try:
-            logging.info("Uploading source file: [%s]", source_file)
+            logging.debug("Uploading source file: [%s]", source_file)
             mime_type = mimetypes.guess_type(source_file)[0] or "text/markdown"
             uploaded_file = state.GEMINI_CLIENT.files.upload(
                 file=source_file,
@@ -77,7 +77,7 @@ def gemini_initialize() -> None:
                 },
             )
             state.UploadedFiles.append(uploaded_file)
-            logging.info("Source file [%s] uploaded successfully. Expire date: [%s]", source_file, uploaded_file.expiration_time)
+            logging.debug("Source file [%s] uploaded successfully. Expire date: [%s]", source_file, uploaded_file.expiration_time)
         except Exception as e:
             logging.warning("Failed to upload file [%s]: %s", source_file, e)
     if len(state.UploadedFiles) > 0:
@@ -86,10 +86,13 @@ def gemini_initialize() -> None:
         raise GeminiRagUploadException("No valid files could be uploaded to Gemini AI")
 
 
-async def gemini_query_sources(user_request: str) -> str:
+async def gemini_query_sources(user_request: str) -> dict:
     """
     Queries the uploaded PDFs with the given prompt.
     Uses safe templating to prevent prompt injection attacks.
+    
+    Returns:
+        dict with keys: 'response' (str), 'tokens' (int)
     """
     # Build safe prompt using Jinja2 templating (prevents injection attacks)
     prompt = build_safe_prompt(state.TELEGRAM_BOT_NAME, user_request)
@@ -102,12 +105,13 @@ async def gemini_query_sources(user_request: str) -> str:
 
     try:
         if (state.GOOGLE_API_MODEL.lower() == "auto") or (state.GOOGLE_API_MODEL.strip() == ""):
-            response_text = await gemini_generate_content_auto_model(prompt)
+            response_text, tokens = await gemini_generate_content_auto_model(prompt)
         else:
-            response_text = await gemini_generate_content_fixed_model(prompt)
+            response_text, tokens = await gemini_generate_content_fixed_model(prompt)
 
-        logging.info("Successfully retrieved [%i] characters response from Gemini API", len(response_text))
-        return response_text
+        logging.info("Successfully retrieved [%i] characters response from Gemini API (tokens: %i)", 
+                    len(response_text), tokens)
+        return {"response": response_text, "tokens": tokens}
     except Exception as e:
         logging.error("Failed to query Gemini API: %s", e)
         raise GeminiQueryException(e) from e
@@ -129,8 +133,8 @@ async def gemini_generate_content_fixed_model(user_request: str) -> str:
     return response
 
 
-async def gemini_generate_content_auto_model(user_request: str) -> str:
-    """Generates content using Gemini AI with automatic model selection."""
+async def gemini_generate_content_auto_model(user_request: str) -> tuple[str, int]:
+    """Generates content using Gemini AI with automatic model selection. Returns (response, token_count)."""
 
     # Check if the model is available
     if not state.MODELS_LIST or len(state.MODELS_LIST) == 0:
@@ -145,7 +149,7 @@ async def gemini_generate_content_auto_model(user_request: str) -> str:
 
     if not model_to_use:
         logging.warning("No Gemini model is currently available due to rate limiting")
-        return "Service is currently unavailable due to high demand. Please try again later."
+        raise GeminiQueryException("Service is currently unavailable due to high demand. Please try again later.")
 
     logging.debug("Selected Gemini model [%s] for the request", model_to_use.name)
     request_timestamp = datetime.now(tz=timezone.utc)
@@ -166,7 +170,7 @@ async def gemini_generate_content_auto_model(user_request: str) -> str:
         logging.info("Model [%s] request log updated. RPM: [%i], TPM: [%i], RPD: [%i]",
                      model_to_use.name, model_to_use.get_rpm(), model_to_use.get_tpm(), model_to_use.get_rpd())
 
-    return response
+    return response, token_count
 
 async def _gemini_generate_content(user_request: str, model: str) -> tuple[str, int]:
     """Generates content using Gemini AI and returns the response along with token count."""

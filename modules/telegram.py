@@ -91,6 +91,17 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logging.warning("Warning: Message from user [%s] from chat_id [%s] is lengthy", user_id, chat_id)
         await update.message.reply_text("Your message is lengthy, please consider shortening it for better responses.")
 
+    # Check rate limiting before processing
+    allowed, reason = state.RATE_LIMITER.check_request_allowed(user_id)
+    if not allowed:
+        logging.warning("Rate limit exceeded for user [%s]: %s", user_id, reason)
+        stats = state.RATE_LIMITER.get_user_stats(user_id)
+        await update.message.reply_text(
+            f"⚠️ {reason}\n\n"
+            f"Usage: {stats['requests_used']}/{stats['requests_limit']} requests/minute"
+        )
+        return
+
     logging.info("Processing valid message from user [%s] (%s) from chat_id [%s], content: %s", user_id, user_name, chat_id, user_message_content)
 
     # Send the cleaned request to the AI
@@ -142,11 +153,28 @@ async def bot_reply_to_message(update: Update, context: ContextTypes.DEFAULT_TYP
         try:
             logging.debug("Trying to request answer from Gemini AI, tentative %i out of %s", i + 1, max_attempts)
             # Request data from Gemini AI by offloading gemini_query_sources to a thread
-            result = await gemini_query_sources(user_message_content)
+            result_data = await gemini_query_sources(user_message_content)
+            
+            # Extract response and tokens
+            response_text = result_data["response"]
+            tokens_used = result_data["tokens"]
+            
+            # Check if tokens exceed rate limit (second check, in case limits were tightened)
+            tokens_ok, tokens_msg = state.RATE_LIMITER.check_tokens_allowed(user_id, tokens_used)
+            if not tokens_ok:
+                logging.warning("Token rate limit exceeded for user [%s] after query: %s", user_id, tokens_msg)
+                await bot_edit_text(context, processing_message.chat_id, processing_message.message_id, 
+                                   f"⚠️ {tokens_msg}\n\nPlease try with a shorter query.")
+                return
+            
+            # Record the request for rate limiting
+            state.RATE_LIMITER.record_request(user_id, tokens_used)
+            logging.info("Recorded request for user [%s]: %d tokens used", user_id, tokens_used)
+            
             logging.debug("Got a result from Gemini, passing it to the Telegram APIs")
             # Replace the placeholder message with the actual result
-            await bot_edit_text(context, processing_message.chat_id, processing_message.message_id, result)
-            logging.debug("Answer from AI: [%s]", result)
+            await bot_edit_text(context, processing_message.chat_id, processing_message.message_id, response_text)
+            logging.debug("Answer from AI: [%s]", response_text)
             logging.info("Replied to user [%s] from chat_id: [%s]", user_id, chat_id)
             # Exit the loop if successful
             return

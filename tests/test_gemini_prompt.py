@@ -17,15 +17,16 @@ class GeminiPromptTests(unittest.IsolatedAsyncioTestCase):
             state, "GOOGLE_API_MODEL", "test-model"
         ), patch(
             "modules.gemini.gemini_generate_content_fixed_model",
-            new=AsyncMock(return_value="plain-language summary"),
+            new=AsyncMock(return_value=("plain-language summary", 150)),
         ) as generate_content:
-            result = await gemini_query_sources("Explain the formula E = mc^2")
+            result_dict = await gemini_query_sources("Explain the formula E = mc^2")
 
         call = generate_content.await_args
         if call is None:
             self.fail("Gemini generation was not called")
         prompt = call.args[0]
-        self.assertEqual(result, "plain-language summary")
+        self.assertEqual(result_dict["response"], "plain-language summary")
+        self.assertEqual(result_dict["tokens"], 150)
         self.assertIn("explain them in plain language only", prompt)
         self.assertIn("never return LaTeX/TeX", prompt)
 

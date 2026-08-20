@@ -14,6 +14,7 @@ from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, fil
 
 from modules.exceptions import TelegramFloodControlException
 from modules.logger import configure_logging
+from modules.rate_limiter import UserRateLimiter
 from modules.repos import pull_and_update
 from modules.telegram import handle_start, handle_message, handle_telegram_error
 from modules import state
@@ -106,6 +107,15 @@ def main():
     app = None
 
     try:
+        # Initialize rate limiter
+        state.RATE_LIMITER = UserRateLimiter(
+            requests_per_minute=state.RATE_LIMIT_REQUESTS_PER_MINUTE,
+            tokens_per_minute=state.RATE_LIMIT_TOKENS_PER_MINUTE,
+        )
+        logging.info("Rate limiter initialized: %d req/min, %d tokens/min per user",
+                    state.RATE_LIMIT_REQUESTS_PER_MINUTE,
+                    state.RATE_LIMIT_TOKENS_PER_MINUTE)
+
         # Start scheduler in background thread
         scheduler_thread = threading.Thread(target=run_scheduler, daemon=True)
         scheduler_thread.start()
