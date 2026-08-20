@@ -108,6 +108,8 @@ For detailed error messages, check the logs.
 
 ## Usage with Docker
 
+### Manual build
+
 1. Clone the repo
 1. Build the container with `docker build -t notebook-lm-bot:latest .`
 1. Create the `docker-compose.yml` file containing the text below
@@ -132,4 +134,26 @@ services:
             limits:
               cpus: '1'
               memory: 256M
+```
+
+### Using pre-built image
+
+```yaml
+services:
+    bot:
+        container_name: telegram-gemini-bot
+        environment:
+          - "GOOGLE_API_KEY=xxxxxxxxxxxxxxxxxxx"
+          - "TELEGRAM_API_KEY=xxxxxxxxxxxxxxxxxxx"
+          - "TELEGRAM_BOT_NAME=@zzzzzzz_bot"
+          - "GOOGLE_API_MAX_ATTEMPTS=2"
+          - "REPO_URL=https://github.com/iu2frl/Telegram_GeminiAI_RAG_Bot.git"
+          - "TELEGRAM_RESTART_DELAY_SECONDS=15"
+        restart: unless-stopped
+        image: ghcr.io/iu2frl/telegram_geminiai_rag_bot:latest
+        deploy:
+          resources:
+            limits:
+              cpus: '0.5'
+              memory: 128M
 ```
