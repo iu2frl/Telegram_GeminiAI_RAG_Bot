@@ -18,6 +18,8 @@ GOOGLE_API_MODEL = ""
 GOOGLE_API_MAX_ATTEMPTS = ""
 REPO_URL = ""
 TELEGRAM_RESTART_DELAY_SECONDS = ""
+HEALTH_HOST = "0.0.0.0"
+HEALTH_PORT = 8080
 
 # State variables
 LOCAL_REPO_PATH = "./sources"
@@ -28,6 +30,7 @@ RELOADING_GEMINI = False
 GEMINI_OPERATION_LOCK = threading.Lock()
 UploadedFiles: list[types.File] = []
 GEMINI_CLIENT: Client | None = None
+HEALTH_READY = False
 
 # Model configuration
 MODEL_CONFIG = types.GenerateContentConfig(

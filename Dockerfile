@@ -25,6 +25,7 @@ COPY --from=builder /usr/local/bin /usr/local/bin
 COPY ./main.py .
 COPY ./modules ./modules
 COPY ./sources ./sources
+EXPOSE 8080
 ENV GIT_PYTHON_REFRESH=quiet
 ARG BUILD_DATE=unknown
 ENV BUILD_DATE=${BUILD_DATE}

@@ -13,6 +13,7 @@ from dotenv import load_dotenv
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters
 
 from modules.exceptions import TelegramFloodControlException
+from modules.health import HealthServer
 from modules.logger import configure_logging
 from modules.rate_limiter import UserRateLimiter
 from modules.repos import pull_and_update
@@ -36,6 +37,14 @@ def load_environment() -> None:
     state.BUILD_DATE = os.getenv("BUILD_DATE", "Unknown")
     state.REPO_URL = os.getenv("REPO_URL", "")
     state.TELEGRAM_RESTART_DELAY_SECONDS = os.getenv("TELEGRAM_RESTART_DELAY_SECONDS", "15")
+    state.HEALTH_HOST = os.getenv("HEALTH_HOST", "0.0.0.0")
+    try:
+        state.HEALTH_PORT = int(os.getenv("HEALTH_PORT", "8080"))
+        if not 1 <= state.HEALTH_PORT <= 65535:
+            raise ValueError
+    except (TypeError, ValueError):
+        logging.warning("Invalid HEALTH_PORT, using default 8080")
+        state.HEALTH_PORT = 8080
 
     try:
         delay_seconds = int(state.TELEGRAM_RESTART_DELAY_SECONDS)
@@ -105,6 +114,7 @@ def main():
     logging.info("Starting the AI assistant bot...")
 
     app = None
+    health_server = None
 
     try:
         # Initialize rate limiter
@@ -115,6 +125,9 @@ def main():
         logging.info("Rate limiter initialized: %d req/min, %d tokens/min per user",
                     state.RATE_LIMIT_REQUESTS_PER_MINUTE,
                     state.RATE_LIMIT_TOKENS_PER_MINUTE)
+
+        health_server = HealthServer(state.HEALTH_HOST, state.HEALTH_PORT)
+        health_server.start()
 
         # Start scheduler in background thread
         scheduler_thread = threading.Thread(target=run_scheduler, daemon=True)
@@ -137,6 +150,7 @@ def main():
         app.add_error_handler(handle_telegram_error)
 
         # Run the bot
+        state.HEALTH_READY = True
         logging.info("Initialization completed, bot is now running...")
         app.run_polling()
 
@@ -152,7 +166,6 @@ def main():
 
             except Exception as stop_exception:
                 logging.error("Error stopping bot application: %s", stop_exception)
-
         # Exit with specific code that can trigger container restart
         try:
             delay_seconds = int(state.TELEGRAM_RESTART_DELAY_SECONDS)
@@ -179,7 +192,6 @@ def main():
                     logging.info("Bot application stopped gracefully")
                 except Exception as stop_exception:
                     logging.error("Error stopping bot application: %s", stop_exception)
-
             # Exit with specific code that can trigger container restart
             try:
                 delay_seconds = int(state.TELEGRAM_RESTART_DELAY_SECONDS)
@@ -196,6 +208,10 @@ def main():
         if app is not None:
             _ = app.stop()
         raise
+    finally:
+        state.HEALTH_READY = False
+        if health_server is not None:
+            health_server.stop()
 
 
 if __name__ == "__main__":
