@@ -5,6 +5,8 @@ import threading
 
 from google.genai import Client, types
 
+from modules.user_context import UserContextStore
+
 # Rate limiting configuration (per-minute limits per user)
 RATE_LIMIT_REQUESTS_PER_MINUTE = 30
 RATE_LIMIT_TOKENS_PER_MINUTE = 250000  # Aligned with Gemini free tier
@@ -33,6 +35,7 @@ UploadedFiles: list[types.File] = []
 GEMINI_CLIENT: Client | None = None
 GEMINI_FILES_EXPIRE_AT: datetime | None = None
 HEALTH_READY = False
+USER_CONTEXT = UserContextStore(max_turns=6, max_chars=6000)
 
 # Model configuration
 MODEL_CONFIG = types.GenerateContentConfig(

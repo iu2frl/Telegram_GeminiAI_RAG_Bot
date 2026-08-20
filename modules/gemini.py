@@ -121,7 +121,7 @@ def gemini_files_need_refresh(now: datetime | None = None) -> bool:
     return now >= refresh_at
 
 
-async def gemini_query_sources(user_request: str) -> dict:
+async def gemini_query_sources(user_request: str, user_id: int | None = None) -> dict:
     """
     Queries the uploaded PDFs with the given prompt.
     Uses safe templating to prevent prompt injection attacks.
@@ -129,8 +129,12 @@ async def gemini_query_sources(user_request: str) -> dict:
     Returns:
         dict with keys: 'response' (str), 'tokens' (int)
     """
-    # Build safe prompt using Jinja2 templating (prevents injection attacks)
-    prompt = build_safe_prompt(state.TELEGRAM_BOT_NAME, user_request)
+    conversation_context = ""
+    if user_id is not None:
+        conversation_context = state.USER_CONTEXT.format_for_prompt(user_id)
+
+    # Build safe prompt using Jinja2 templating (prevents prompt injection attacks)
+    prompt = build_safe_prompt(state.TELEGRAM_BOT_NAME, user_request, conversation_context)
     
     # Validate prompt safety (defense in depth)
     if not validate_prompt_safety(prompt, user_request):

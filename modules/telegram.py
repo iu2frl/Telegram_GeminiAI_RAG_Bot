@@ -35,6 +35,14 @@ async def handle_start(update: Update, _context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Hello! Send me a message with your question, and I'll do my best to help you!")
 
 
+async def handle_context_reset(update: Update, _context: ContextTypes.DEFAULT_TYPE):
+    """Clear the requesting user's conversation context."""
+    if update.effective_user is None or update.message is None:
+        return
+    state.USER_CONTEXT.clear(update.effective_user.id)
+    await update.message.reply_text("Your conversation context has been cleared.")
+
+
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Processes user messages and replies with the PDF query result."""
 
@@ -150,7 +158,7 @@ async def bot_reply_to_message(update: Update, context: ContextTypes.DEFAULT_TYP
         try:
             logging.debug("Trying to request answer from Gemini AI, tentative %i out of %s", i + 1, max_attempts)
             # Request data from Gemini AI by offloading gemini_query_sources to a thread
-            result_data = await gemini_query_sources(user_message_content)
+            result_data = await gemini_query_sources(user_message_content, user_id)
             
             # Extract response and tokens
             response_text = result_data["response"]
@@ -171,6 +179,7 @@ async def bot_reply_to_message(update: Update, context: ContextTypes.DEFAULT_TYP
             logging.debug("Got a result from Gemini, passing it to the Telegram APIs")
             # Replace the placeholder message with the actual result
             await bot_edit_text(context, processing_message.chat_id, processing_message.message_id, response_text)
+            state.USER_CONTEXT.add_turn(user_id, user_message_content, response_text)
             logging.debug("Answer from AI: [%s]", response_text)
             logging.info("Replied to user [%s] from chat_id: [%s]", user_id, chat_id)
             # Exit the loop if successful

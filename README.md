@@ -82,10 +82,12 @@ python main.py
 ### Commands
 
 - **`/start`**: Initiates interaction with the bot and provides an introductory message.
+- **`/reset`**: Clears your recent conversation context.
 
 ### Messaging
 
 - Send a text message with your query to the bot, and it will respond based on the information in the uploaded documents.
+- Recent exchanges are kept separately per Telegram user to support follow-up questions. Context is bounded in memory and is cleared with `/reset`.
 
 ## Logs
 

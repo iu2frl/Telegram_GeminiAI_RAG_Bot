@@ -17,7 +17,7 @@ from modules.health import HealthServer
 from modules.logger import configure_logging
 from modules.rate_limiter import UserRateLimiter
 from modules.repos import pull_and_update
-from modules.telegram import handle_start, handle_message, handle_telegram_error
+from modules.telegram import handle_context_reset, handle_start, handle_message, handle_telegram_error
 from modules import state
 
 
@@ -144,6 +144,8 @@ def main():
         # Register handlers
         logging.debug("Registering the /start command handler")
         app.add_handler(CommandHandler("start", handle_start))
+        logging.debug("Registering the /reset command handler")
+        app.add_handler(CommandHandler("reset", handle_context_reset))
         logging.debug("Registering the messages handler")
         app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
         logging.debug("Registering the error handler")
