@@ -3,6 +3,7 @@ Main code for the Telegram Gemini AI assistant bot.
 """
 
 import os
+import signal
 import sys
 import logging
 import threading
@@ -98,15 +99,20 @@ def load_environment() -> None:
     logging.info("Restart delay on flood control: %s seconds", state.TELEGRAM_RESTART_DELAY_SECONDS)
 
 
-def run_scheduler():
+def run_scheduler(stop_event: threading.Event | None = None):
     """Runs the scheduler in a separate thread"""
+    if stop_event is None:
+        stop_event = threading.Event()
+
     logging.info("Starting scheduler thread...")
     schedule.every().day.at("00:00").do(pull_and_update)
     logging.debug("Scheduled daily repository update at 00:00")
 
-    while True:
+    while not stop_event.is_set():
         schedule.run_pending()
-        time.sleep(1)
+        stop_event.wait(1)
+
+    logging.info("Scheduler thread stopped")
 
 
 def main():
@@ -115,6 +121,8 @@ def main():
 
     app = None
     health_server = None
+    scheduler_stop_event = threading.Event()
+    scheduler_thread = None
 
     try:
         # Initialize rate limiter
@@ -130,7 +138,12 @@ def main():
         health_server.start()
 
         # Start scheduler in background thread
-        scheduler_thread = threading.Thread(target=run_scheduler, daemon=True)
+        scheduler_thread = threading.Thread(
+            target=run_scheduler,
+            args=(scheduler_stop_event,),
+            name="scheduler",
+            daemon=True,
+        )
         scheduler_thread.start()
         logging.info("Scheduler thread started")
 
@@ -154,7 +167,8 @@ def main():
         # Run the bot
         state.HEALTH_READY = True
         logging.info("Initialization completed, bot is now running...")
-        app.run_polling()
+        # python-telegram-bot handles these signals and stops polling cleanly.
+        app.run_polling(stop_signals={signal.SIGINT, signal.SIGTERM})
 
     except TelegramFloodControlException as flood_exception:
         logging.critical("Telegram flood control exception detected: %s", flood_exception)
@@ -212,6 +226,9 @@ def main():
         raise
     finally:
         state.HEALTH_READY = False
+        scheduler_stop_event.set()
+        if scheduler_thread is not None and scheduler_thread is not threading.current_thread():
+            scheduler_thread.join(timeout=5)
         if health_server is not None:
             health_server.stop()
 

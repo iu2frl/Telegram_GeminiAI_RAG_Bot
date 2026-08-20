@@ -156,6 +156,8 @@ services:
               memory: 256M
 ```
 
+The bot handles `SIGINT` and `SIGTERM` for graceful shutdown. During shutdown it marks the service as not ready, stops Telegram polling, stops the scheduler, and shuts down the internal health server.
+
 ### Using pre-built image
 
 ```yaml
