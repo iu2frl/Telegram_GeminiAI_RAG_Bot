@@ -55,9 +55,27 @@ GOOGLE_API_MODEL=gemini-2.0-flash
 GOOGLE_API_MAX_ATTEMPTS=2
 REPO_URL=https://github.com/octocat/hello-world
 TELEGRAM_RESTART_DELAY_SECONDS=15
+HEALTH_HOST=0.0.0.0
+HEALTH_PORT=8080
+BUILD_DATE=Unknown
 ```
 
 Please note: creating the `.env` file is optional. If the variables are set in the current environment, the bot will retrieve them from there. Never commit this file or copy it into a container image.
+
+### Environment variables
+
+| Variable | Required | Default | Description |
+| --- | --- | --- | --- |
+| `TELEGRAM_API_KEY` | Yes | None | Telegram bot token. |
+| `TELEGRAM_BOT_NAME` | Yes | None | Telegram bot username. |
+| `GOOGLE_API_KEY` | Yes | None | Google Gemini API key. |
+| `REPO_URL` | Yes | None | Git repository containing source documents. |
+| `GOOGLE_API_MODEL` | No | `auto` | Gemini model name, or `auto` for automatic selection. |
+| `GOOGLE_API_MAX_ATTEMPTS` | No | `2` | Maximum Gemini request attempts. |
+| `TELEGRAM_RESTART_DELAY_SECONDS` | No | `15` | Restart delay after Telegram flood control. |
+| `HEALTH_HOST` | No | `0.0.0.0` | Bind address for the internal health server. |
+| `HEALTH_PORT` | No | `8080` | Internal health server port. |
+| `BUILD_DATE` | No | `Unknown` | Build metadata reported in startup logs; Docker builds can set it with `--build-arg`. |
 
 1. Prepare the sources
 
@@ -148,9 +166,12 @@ services:
           - "GOOGLE_API_KEY=xxxxxxxxxxxxxxxxxxx"
           - "TELEGRAM_API_KEY=xxxxxxxxxxxxxxxxxxx"
           - "TELEGRAM_BOT_NAME=@zzzzzzz_bot"
+          - "GOOGLE_API_MODEL=auto"
           - "GOOGLE_API_MAX_ATTEMPTS=2"
           - "REPO_URL=https://github.com/iu2frl/Telegram_GeminiAI_RAG_Bot.git"
           - "TELEGRAM_RESTART_DELAY_SECONDS=15"
+          - "HEALTH_HOST=0.0.0.0"
+          - "HEALTH_PORT=8080"
         restart: unless-stopped
         image: ghcr.io/iu2frl/telegram_geminiai_rag_bot:latest
         deploy:
