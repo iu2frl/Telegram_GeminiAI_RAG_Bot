@@ -48,6 +48,7 @@ def clone_or_pull_repo():
 
     except Exception as e:
         logging.error("Failed to update source files: %s", e)
+        raise
 
 
 def list_files_in_folder(folder_path):

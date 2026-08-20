@@ -7,18 +7,9 @@ import matplotlib
 import matplotlib.pyplot as plt
 from html.parser import HTMLParser
 
-from telegram.helpers import escape_markdown
-
 matplotlib.use("Agg")
 
 ZERO_WIDTH_SPACE = "\u200b"
-
-
-def escape_telegram_markdown(text: str) -> str:
-    """
-    Escapes special characters in the text for Telegram MarkdownV2.
-    """
-    return escape_markdown(text, version=2)
 
 
 def sanitize_telegram_html(text: str) -> str:
@@ -93,144 +84,83 @@ def sanitize_telegram_html(text: str) -> str:
     return "".join(parser.output)
 
 
-def _format_markdown_v2(text: str) -> str:
+def remove_markup(text: str) -> str:
     """
-    Best-effort conversion from common Markdown to Telegram MarkdownV2.
-    Preserves basic formatting while escaping unsafe characters.
+    Removes supported HTML and common Markdown formatting from the text.
     """
-    if not text:
-        return ""
-
-    normalized_text = text.replace("\r\n", "\n").replace("\r", "\n")
-    placeholders = {}
-
-    def add_placeholder(value: str) -> str:
-        key = f"PLHDR{len(placeholders)}XPLHDR"
-        placeholders[key] = value
-        return key
-
-    # Code blocks
-    code_block_pattern = re.compile(r"```(\w+)?\n([\s\S]*?)```", re.MULTILINE)
-
-    def replace_code_block(match: re.Match) -> str:
-        language = match.group(1) or ""
-        code = match.group(2)
-        escaped_code = escape_markdown(code, version=2, entity_type="pre")
-        if language:
-            return add_placeholder(f"```{language}\n{escaped_code}```")
-        return add_placeholder(f"```\n{escaped_code}```")
-
-    normalized_text = code_block_pattern.sub(replace_code_block, normalized_text)
-
-    # Inline code
-    inline_code_pattern = re.compile(r"`([^`\n]+)`")
-
-    def replace_inline_code(match: re.Match) -> str:
-        code = match.group(1)
-        escaped_code = escape_markdown(code, version=2, entity_type="code")
-        return add_placeholder(f"`{escaped_code}`")
-
-    normalized_text = inline_code_pattern.sub(replace_inline_code, normalized_text)
-
-    # Links
-    link_pattern = re.compile(r"\[([^\]]+)\]\(([^)]+)\)")
-
-    def replace_link(match: re.Match) -> str:
-        label = escape_markdown(match.group(1), version=2)
-        url = match.group(2).replace("\\", "\\\\").replace(")", "\\)")
-        return add_placeholder(f"[{label}]({url})")
-
-    normalized_text = link_pattern.sub(replace_link, normalized_text)
-
-    # Bold **text**
-    normalized_text = re.sub(
-        r"\*\*([^*\n]+)\*\*",
-        lambda m: add_placeholder(f"*{escape_markdown(m.group(1), version=2)}*"),
-        normalized_text,
-    )
-
-    # Underline __text__
-    normalized_text = re.sub(
-        r"__([^_\n]+)__",
-        lambda m: add_placeholder(f"__{escape_markdown(m.group(1), version=2)}__"),
-        normalized_text,
-    )
-
-    # Italic *text*
-    normalized_text = re.sub(
-        r"(?<!\*)\*([^*\n]+)\*(?!\*)",
-        lambda m: add_placeholder(f"_{escape_markdown(m.group(1), version=2)}_"),
-        normalized_text,
-    )
-
-    # Italic _text_
-    normalized_text = re.sub(
-        r"(?<!_)_([^_\n]+)_(?!_)",
-        lambda m: add_placeholder(f"_{escape_markdown(m.group(1), version=2)}_"),
-        normalized_text,
-    )
-
-    # Strikethrough ~~text~~
-    normalized_text = re.sub(
-        r"~~([^~\n]+)~~",
-        lambda m: add_placeholder(f"~{escape_markdown(m.group(1), version=2)}~"),
-        normalized_text,
-    )
-
-    # Spoiler ||text||
-    normalized_text = re.sub(
-        r"\|\|([^|\n]+)\|\|",
-        lambda m: add_placeholder(f"||{escape_markdown(m.group(1), version=2)}||"),
-        normalized_text,
-    )
-
-    # Escape remaining text
-    escaped_text = escape_markdown(normalized_text, version=2)
-
-    # Restore placeholders
-    for key, value in placeholders.items():
-        escaped_text = escaped_text.replace(key, value)
-
-    return escaped_text
-
-
-def remove_markdown(text: str) -> str:
-    """
-    Removes Markdown formatting from the text.
-    """
+    text = re.sub(r"</?[A-Za-z][^>]*>", "", text)
     text = text.replace("**", "")
     text = text.replace("__", "")
-    return text
+    return html.unescape(text)
 
 
-def _split_telegram_message(text: str, limit: int = 4096) -> list[str]:
-    """
-    Splits text into chunks within Telegram's message size limit.
-    Attempts to split on paragraph boundaries first.
-    """
+def _split_telegram_html(text: str, limit: int = 4096) -> list[str]:
+    """Splits Telegram HTML without leaving formatting tags unbalanced."""
     if not text:
         return [""]
-
     if len(text) <= limit:
         return [text]
 
-    chunks = []
-    remaining = text
+    tokens = re.split(r"(</?[A-Za-z][^>]*>)", text)
+    chunks: list[str] = []
+    current: list[str] = []
+    open_tags: list[str] = []
 
-    while len(remaining) > limit:
-        split_index = remaining.rfind("\n\n", 0, limit)
-        if split_index == -1:
-            split_index = remaining.rfind("\n", 0, limit)
-        if split_index == -1 or split_index < 1:
-            split_index = limit
+    def closing_tags() -> str:
+        return "".join(f"</{tag}>" for tag in reversed(open_tags))
 
-        chunk = remaining[:split_index].strip()
-        if chunk:
-            chunks.append(chunk)
-        remaining = remaining[split_index:].lstrip()
+    def opening_tags() -> str:
+        return "".join(f"<{tag}>" for tag in open_tags)
 
-    if remaining:
-        chunks.append(remaining)
+    def flush_chunk() -> None:
+        nonlocal current
+        if not current:
+            return
+        current_text = "".join(current)
+        chunks.append(current_text + closing_tags())
+        current = [opening_tags()]
+
+    for token in tokens:
+        if not token:
+            continue
+
+        tag_match = re.fullmatch(r"</?([A-Za-z][A-Za-z0-9-]*)[^>]*>", token)
+        if tag_match:
+            tag_name = tag_match.group(1).lower()
+            is_closing = token.startswith("</")
+            token_length = len(token)
+            if len("".join(current)) + token_length + len(closing_tags()) > limit:
+                flush_chunk()
+            current.append(token)
+            if is_closing:
+                if tag_name in open_tags:
+                    open_tags.remove(tag_name)
+            else:
+                open_tags.append(tag_name)
+            continue
+
+        remaining = token
+        while remaining:
+            current_length = len("".join(current))
+            capacity = limit - current_length - len(closing_tags())
+            if capacity <= 0:
+                flush_chunk()
+                continue
+            if len(remaining) <= capacity:
+                current.append(remaining)
+                break
+
+            split_at = remaining.rfind("\n\n", 0, capacity + 1)
+            if split_at <= 0:
+                split_at = remaining.rfind("\n", 0, capacity + 1)
+            if split_at <= 0:
+                split_at = capacity
+            current.append(remaining[:split_at])
+            remaining = remaining[split_at:]
+            flush_chunk()
+
+    if current and "".join(current) != opening_tags():
+        chunks.append("".join(current) + closing_tags())
 
     return chunks
 

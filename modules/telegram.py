@@ -14,10 +14,10 @@ from modules.exceptions import GeminiQueryException, TelegramFloodControlExcepti
 from modules.gemini import gemini_initialize, gemini_query_sources
 from modules.helpers import (
     ZERO_WIDTH_SPACE,
-    _format_markdown_v2,
-    _split_telegram_message,
-    remove_markdown,
+    _split_telegram_html,
+    remove_markup,
     render_latex_to_png_bytes,
+    sanitize_telegram_html,
     split_text_with_latex,
 )
 
@@ -207,7 +207,7 @@ async def bot_reply_to_message(update: Update, context: ContextTypes.DEFAULT_TYP
     logging.debug("Updated message with error notification.")
 
 
-async def bot_edit_text(context, chat_id, message_id, text: str):
+async def bot_edit_text(context, chat_id, message_id, text: str, _allow_retry: bool = True):
     """
     Edits the message with the content of the file.
     """
@@ -217,16 +217,16 @@ async def bot_edit_text(context, chat_id, message_id, text: str):
         has_latex = any(segment_type == "latex" for segment_type, _ in segments)
 
         if not has_latex:
-            escaped_text = _format_markdown_v2(text).strip()
-            chunks = _split_telegram_message(escaped_text)
+            formatted_text = sanitize_telegram_html(text).strip()
+            chunks = _split_telegram_html(formatted_text)
             await context.bot.edit_message_text(
                 chat_id=chat_id,
                 message_id=message_id,
                 text=chunks[0],
-                parse_mode="MarkdownV2",
+                parse_mode="HTML",
             )
             for chunk in chunks[1:]:
-                await context.bot.send_message(chat_id=chat_id, text=chunk, parse_mode="MarkdownV2")
+                await context.bot.send_message(chat_id=chat_id, text=chunk, parse_mode="HTML")
             return
 
         first_sent = False
@@ -234,23 +234,23 @@ async def bot_edit_text(context, chat_id, message_id, text: str):
             if segment_type == "text":
                 if not segment_content.strip():
                     continue
-                escaped_text = _format_markdown_v2(segment_content).strip()
-                if not escaped_text:
+                formatted_text = sanitize_telegram_html(segment_content).strip()
+                if not formatted_text:
                     continue
-                chunks = _split_telegram_message(escaped_text)
+                chunks = _split_telegram_html(formatted_text)
                 if not first_sent:
                     await context.bot.edit_message_text(
                         chat_id=chat_id,
                         message_id=message_id,
                         text=chunks[0],
-                        parse_mode="MarkdownV2",
+                        parse_mode="HTML",
                     )
                     for chunk in chunks[1:]:
-                        await context.bot.send_message(chat_id=chat_id, text=chunk, parse_mode="MarkdownV2")
+                        await context.bot.send_message(chat_id=chat_id, text=chunk, parse_mode="HTML")
                     first_sent = True
                 else:
                     for chunk in chunks:
-                        await context.bot.send_message(chat_id=chat_id, text=chunk, parse_mode="MarkdownV2")
+                        await context.bot.send_message(chat_id=chat_id, text=chunk, parse_mode="HTML")
                 continue
 
             latex_bytes = render_latex_to_png_bytes(segment_content)
@@ -259,16 +259,16 @@ async def bot_edit_text(context, chat_id, message_id, text: str):
                     chat_id=chat_id,
                     message_id=message_id,
                     text=ZERO_WIDTH_SPACE,
-                    parse_mode="MarkdownV2",
+                    parse_mode="HTML",
                 )
                 first_sent = True
 
             if latex_bytes:
                 await context.bot.send_photo(chat_id=chat_id, photo=latex_bytes)
             else:
-                fallback_text = _format_markdown_v2(f"${segment_content}$").strip()
-                for chunk in _split_telegram_message(fallback_text):
-                    await context.bot.send_message(chat_id=chat_id, text=chunk, parse_mode="MarkdownV2")
+                fallback_text = sanitize_telegram_html(f"${segment_content}$").strip()
+                for chunk in _split_telegram_html(fallback_text):
+                    await context.bot.send_message(chat_id=chat_id, text=chunk, parse_mode="HTML")
     except RetryAfter as retry_exception:
         # Handle flood control specifically
         if retry_exception.retry_after is None:
@@ -285,14 +285,14 @@ async def bot_edit_text(context, chat_id, message_id, text: str):
             logging.critical("Network Retry Loop flood control detected: %s", error_message)
             raise TelegramFloodControlException(f"Flood control exceeded in Network Retry Loop: {error_message}") from retry_exception
 
-        # For regular flood control, wait and retry
+        if not _allow_retry:
+            raise
+
+        # For regular flood control, retry the complete operation once.
         await asyncio.sleep(retry_seconds + 1)  # Add 1 second buffer
 
         try:
-            chunks = _split_telegram_message(escaped_text)
-            await context.bot.edit_message_text(chat_id=chat_id, message_id=message_id, text=chunks[0], parse_mode="MarkdownV2")
-            for chunk in chunks[1:]:
-                await context.bot.send_message(chat_id=chat_id, text=chunk, parse_mode="MarkdownV2")
+            await bot_edit_text(context, chat_id, message_id, text, _allow_retry=False)
         except Exception as retry_edit_exception:
             logging.error("Failed to edit message after flood control retry: %s", retry_edit_exception)
             raise
@@ -323,9 +323,9 @@ async def bot_edit_text(context, chat_id, message_id, text: str):
         logging.error("Failed to edit message: %s", ret_exception)
 
         try:
-            # Fallback to plain text if MarkdownV2 fails
+            # Fallback to plain text if HTML sending fails
             logging.debug("Trying to edit message with plain text")
-            text = remove_markdown(text).strip()
+            text = remove_markup(text).strip()
             await context.bot.edit_message_text(chat_id=chat_id, message_id=message_id, text=text)
 
         except Exception as edit_exception:

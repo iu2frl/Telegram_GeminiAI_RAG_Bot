@@ -89,6 +89,7 @@ async def gemini_query_sources(user_request: str) -> str:
     """Queries the uploaded PDFs with the given prompt."""
     instruction = f"You are `{state.TELEGRAM_BOT_NAME}`, a chatbot that can only answer to users request based solely on the source documents."
     instruction += " Reply to the following message using the same language in a short but complete manner."
+    instruction += " Format the response using only Telegram HTML tags: <b>, <i>, <u>, <s>, <code>, <pre>, <blockquote>, and <a href=\"...\">. Do not use Markdown, tables, or unsupported HTML."
     instruction += " When returning LaTex formulas, try to translate them to simple text if possible."
     user_request = f"{instruction}:\n\n`{user_request}`"
     logging.debug("Generated prompt: [%s]", user_request)
@@ -163,6 +164,9 @@ async def gemini_generate_content_auto_model(user_request: str) -> str:
 
 async def _gemini_generate_content(user_request: str, model: str) -> tuple[str, int]:
     """Generates content using Gemini AI and returns the response along with token count."""
+
+    if state.GEMINI_CLIENT is None:
+        raise GeminiApiInitializeException("Gemini client is not initialized")
 
     response = await state.GEMINI_CLIENT.aio.models.generate_content(model=model, contents=[*state.UploadedFiles, user_request], config=state.MODEL_CONFIG)
 

@@ -1,7 +1,6 @@
 """Shared runtime state across modules."""
 
-from datetime import datetime
-from datetime import timezone
+from datetime import datetime, timezone
 from google.genai import Client, types
 
 # Global configuration
@@ -15,13 +14,12 @@ TELEGRAM_RESTART_DELAY_SECONDS = ""
 
 # State variables
 LOCAL_REPO_PATH = "./sources"
-MODEL = None
 BUILD_DATE = ""
 
 # Working variables
 RELOADING_GEMINI = False
 UploadedFiles: list[types.File] = []
-GEMINI_CLIENT: Client = Client()
+GEMINI_CLIENT: Client | None = None
 
 # Model configuration
 MODEL_CONFIG = types.GenerateContentConfig(
@@ -52,20 +50,24 @@ class GenAiModel:
     max_tpm: int  # Maximum number of input tokens per minute
     max_rpd: int  # Maximum number of requests per day
 
-    requests: list[GenAiRequest] = []
-
     def __init__(self, name: str, max_rpm: int, max_tpm: int, max_rpd: int):
         self.name = name
         self.max_rpm = max_rpm
         self.max_tpm = max_tpm
         self.max_rpd = max_rpd
+        self.requests: list[GenAiRequest] = []
 
-    def add_request(self, timestamp: datetime = datetime.now(tz=timezone.utc), token_count: int = 0):
+    def add_request(self, timestamp: datetime | None = None, token_count: int = 0):
         """Add a request timestamp to the model's request log."""
+        if timestamp is None:
+            timestamp = datetime.now(tz=timezone.utc)
         self.requests.append(GenAiRequest(timestamp, token_count))
 
-    def is_available(self, timestamp: datetime = datetime.now(tz=timezone.utc)) -> bool:
+    def is_available(self, timestamp: datetime | None = None) -> bool:
         """Check if the model can accept more requests based on rate limits."""
+
+        if timestamp is None:
+            timestamp = datetime.now(tz=timezone.utc)
 
         # Clean up old requests
         self.requests = [req for req in self.requests if (timestamp - req.timestamp).total_seconds() < 86400]  # 24 hours
@@ -77,16 +79,22 @@ class GenAiModel:
 
         return len(requests_last_minute) < self.max_rpm and len(requests_last_hour) < self.max_tpm and len(requests_last_day) < self.max_rpd
 
-    def get_rpm(self, timestamp: datetime = datetime.now(tz=timezone.utc)) -> int:
+    def get_rpm(self, timestamp: datetime | None = None) -> int:
         """Get the number of requests in the last minute."""
+        if timestamp is None:
+            timestamp = datetime.now(tz=timezone.utc)
         return len([req for req in self.requests if (timestamp - req.timestamp).total_seconds() < 60])
 
-    def get_tpm(self, timestamp: datetime = datetime.now(tz=timezone.utc)) -> int:
+    def get_tpm(self, timestamp: datetime | None = None) -> int:
         """Get the number of tokens in the last hour."""
+        if timestamp is None:
+            timestamp = datetime.now(tz=timezone.utc)
         return sum(req.token_count for req in self.requests if (timestamp - req.timestamp).total_seconds() < 3600)
 
-    def get_rpd(self, timestamp: datetime = datetime.now(tz=timezone.utc)) -> int:
+    def get_rpd(self, timestamp: datetime | None = None) -> int:
         """Get the number of requests in the last day."""
+        if timestamp is None:
+            timestamp = datetime.now(tz=timezone.utc)
         return len([req for req in self.requests if (timestamp - req.timestamp).total_seconds() < 86400])
 
 # Usage limits based on https://aistudio.google.com/usage?timeRange=last-7-days

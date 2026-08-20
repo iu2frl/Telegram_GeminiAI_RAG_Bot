@@ -1,6 +1,6 @@
 import unittest
 
-from modules.helpers import sanitize_telegram_html
+from modules.helpers import _split_telegram_html, remove_markup, sanitize_telegram_html
 
 
 class TelegramHtmlTests(unittest.TestCase):
@@ -77,6 +77,31 @@ class TelegramHtmlTests(unittest.TestCase):
         source = '<b>unfinished response'
 
         self.assertEqual(sanitize_telegram_html(source), '<b>unfinished response</b>')
+
+    def test_long_html_is_split_with_balanced_tags(self):
+        source = '<b>' + ('answer ' * 20) + '</b>'
+
+        chunks = _split_telegram_html(source, limit=40)
+
+        self.assertGreater(len(chunks), 1)
+        self.assertTrue(all(len(chunk) <= 40 for chunk in chunks))
+        self.assertEqual("".join(chunk.replace('<b>', '').replace('</b>', '') for chunk in chunks), 'answer ' * 20)
+        self.assertTrue(all(chunk.startswith('<b>') for chunk in chunks))
+        self.assertTrue(all(chunk.endswith('</b>') for chunk in chunks))
+
+    def test_html_split_preserves_code_and_links(self):
+        source = '<pre><code>' + ('x &lt; y\n' * 12) + '</code></pre>'
+
+        chunks = _split_telegram_html(source, limit=35)
+
+        self.assertTrue(all(len(chunk) <= 35 for chunk in chunks))
+        self.assertTrue(all(chunk.startswith('<pre><code>') for chunk in chunks))
+        self.assertTrue(all(chunk.endswith('</code></pre>') for chunk in chunks))
+
+    def test_fallback_removes_html_and_markdown_markup(self):
+        source = '<b>HTML</b> and **Markdown** &amp; text'
+
+        self.assertEqual(remove_markup(source), 'HTML and Markdown & text')
 
 
 if __name__ == "__main__":

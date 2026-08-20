@@ -3,23 +3,19 @@ Module defining custom exceptions for Gemini AI operations.
 """
 
 # Custom exceptions
-class GeminiModelCreationException(BaseException):
-    """Used to identify errors from Gemini"""
-
-
-class GeminiApiInitializeException(BaseException):
+class GeminiApiInitializeException(Exception):
     """Used to identify initialization errors"""
 
 
-class GeminiRagUploadException(BaseException):
+class GeminiRagUploadException(Exception):
     """Used to identify files upload errors"""
 
 
-class GeminiFilesListingException(BaseException):
+class GeminiFilesListingException(Exception):
     """Used to identify files upload errors"""
 
 
-class GeminiQueryException(BaseException):
+class GeminiQueryException(Exception):
     """Used to identify files expired errors"""
 
 
