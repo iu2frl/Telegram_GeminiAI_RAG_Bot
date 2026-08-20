@@ -90,7 +90,7 @@ async def gemini_query_sources(user_request: str) -> str:
     instruction = f"You are `{state.TELEGRAM_BOT_NAME}`, a chatbot that can only answer to users request based solely on the source documents."
     instruction += " Reply to the following message using the same language in a short but complete manner."
     instruction += " Format the response using only Telegram HTML tags: <b>, <i>, <u>, <s>, <code>, <pre>, <blockquote>, and <a href=\"...\">. Do not use Markdown, tables, or unsupported HTML."
-    instruction += " When returning LaTex formulas, try to translate them to simple text if possible."
+    instruction += " If the source contains mathematical formulas, summarize their meaning in plain language only. Never return LaTeX, TeX, math delimiters, or the original formulas."
     user_request = f"{instruction}:\n\n`{user_request}`"
     logging.debug("Generated prompt: [%s]", user_request)
 

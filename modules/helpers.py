@@ -1,16 +1,8 @@
 
-import io
 import html
 import re
 
-import matplotlib
-import matplotlib.pyplot as plt
 from html.parser import HTMLParser
-
-matplotlib.use("Agg")
-
-ZERO_WIDTH_SPACE = "\u200b"
-
 
 def sanitize_telegram_html(text: str) -> str:
     """Keeps Telegram-supported HTML and escapes literal text safely."""
@@ -165,65 +157,3 @@ def _split_telegram_html(text: str, limit: int = 4096) -> list[str]:
     return chunks
 
 
-def split_text_with_latex(text: str) -> list[tuple[str, str]]:
-    """
-    Splits text into a sequence of (type, content), where type is 'text' or 'latex'.
-    Handles both $$...$$ and $...$ (non-escaped) blocks.
-    """
-    if not text:
-        return [("text", "")]
-
-    pattern = re.compile(r"(?<!\\)\$\$(.+?)(?<!\\)\$\$|(?<!\\)\$(.+?)(?<!\\)\$", re.DOTALL)
-    segments: list[tuple[str, str]] = []
-    last_index = 0
-
-    for match in pattern.finditer(text):
-        start, end = match.span()
-        if start > last_index:
-            segments.append(("text", text[last_index:start]))
-
-        latex_content = match.group(1) if match.group(1) is not None else match.group(2)
-        if latex_content is None:
-            latex_content = ""
-        segments.append(("latex", latex_content))
-        last_index = end
-
-    if last_index < len(text):
-        segments.append(("text", text[last_index:]))
-
-    return segments
-
-
-def render_latex_to_png_bytes(latex: str, fontsize: int = 14, dpi: int = 200) -> bytes | None:
-    """
-    Renders LaTeX to PNG bytes using matplotlib's mathtext.
-    Returns None if rendering fails.
-    """
-    if latex is None:
-        return None
-
-    latex = latex.strip()
-    if not latex:
-        return None
-
-    latex = latex.replace("\n", " \\ ")
-
-    try:
-        fig = plt.figure(figsize=(0.01, 0.01))
-        fig.patch.set_alpha(0)
-        text = fig.text(0, 0, f"${latex}$", fontsize=fontsize)
-        fig.canvas.draw()
-        bbox = text.get_window_extent()
-        width, height = bbox.width / dpi, bbox.height / dpi
-        fig.set_size_inches((width, height))
-        buf = io.BytesIO()
-        fig.savefig(buf, format="png", dpi=dpi, bbox_inches="tight", pad_inches=0.1, transparent=True)
-        plt.close(fig)
-        buf.seek(0)
-        return buf.getvalue()
-    except (RuntimeError, ValueError, OSError):
-        try:
-            plt.close("all")
-        except (RuntimeError, ValueError, OSError):
-            pass
-        return None

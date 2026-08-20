@@ -13,12 +13,9 @@ from modules import state
 from modules.exceptions import GeminiQueryException, TelegramFloodControlException
 from modules.gemini import gemini_initialize, gemini_query_sources
 from modules.helpers import (
-    ZERO_WIDTH_SPACE,
     _split_telegram_html,
     remove_markup,
-    render_latex_to_png_bytes,
     sanitize_telegram_html,
-    split_text_with_latex,
 )
 
 
@@ -213,62 +210,16 @@ async def bot_edit_text(context, chat_id, message_id, text: str, _allow_retry: b
     """
     try:
         logging.debug("Sending edited message")
-        segments = split_text_with_latex(text)
-        has_latex = any(segment_type == "latex" for segment_type, _ in segments)
-
-        if not has_latex:
-            formatted_text = sanitize_telegram_html(text).strip()
-            chunks = _split_telegram_html(formatted_text)
-            await context.bot.edit_message_text(
-                chat_id=chat_id,
-                message_id=message_id,
-                text=chunks[0],
-                parse_mode="HTML",
-            )
-            for chunk in chunks[1:]:
-                await context.bot.send_message(chat_id=chat_id, text=chunk, parse_mode="HTML")
-            return
-
-        first_sent = False
-        for segment_type, segment_content in segments:
-            if segment_type == "text":
-                if not segment_content.strip():
-                    continue
-                formatted_text = sanitize_telegram_html(segment_content).strip()
-                if not formatted_text:
-                    continue
-                chunks = _split_telegram_html(formatted_text)
-                if not first_sent:
-                    await context.bot.edit_message_text(
-                        chat_id=chat_id,
-                        message_id=message_id,
-                        text=chunks[0],
-                        parse_mode="HTML",
-                    )
-                    for chunk in chunks[1:]:
-                        await context.bot.send_message(chat_id=chat_id, text=chunk, parse_mode="HTML")
-                    first_sent = True
-                else:
-                    for chunk in chunks:
-                        await context.bot.send_message(chat_id=chat_id, text=chunk, parse_mode="HTML")
-                continue
-
-            latex_bytes = render_latex_to_png_bytes(segment_content)
-            if not first_sent:
-                await context.bot.edit_message_text(
-                    chat_id=chat_id,
-                    message_id=message_id,
-                    text=ZERO_WIDTH_SPACE,
-                    parse_mode="HTML",
-                )
-                first_sent = True
-
-            if latex_bytes:
-                await context.bot.send_photo(chat_id=chat_id, photo=latex_bytes)
-            else:
-                fallback_text = sanitize_telegram_html(f"${segment_content}$").strip()
-                for chunk in _split_telegram_html(fallback_text):
-                    await context.bot.send_message(chat_id=chat_id, text=chunk, parse_mode="HTML")
+        formatted_text = sanitize_telegram_html(text).strip()
+        chunks = _split_telegram_html(formatted_text)
+        await context.bot.edit_message_text(
+            chat_id=chat_id,
+            message_id=message_id,
+            text=chunks[0],
+            parse_mode="HTML",
+        )
+        for chunk in chunks[1:]:
+            await context.bot.send_message(chat_id=chat_id, text=chunk, parse_mode="HTML")
     except RetryAfter as retry_exception:
         # Handle flood control specifically
         if retry_exception.retry_after is None:

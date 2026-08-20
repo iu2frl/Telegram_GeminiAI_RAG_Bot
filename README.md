@@ -7,7 +7,8 @@ This bot is an AI-powered assistant that uses Google's Gemini AI to process user
 - Responds to user queries about specific documents or topics.
 - Utilizes Google Gemini AI for natural language understanding and document-based querying.
 - Handles Telegram messages and commands.
-- Supports MarkdownV2 formatting for responses.
+- Supports Telegram HTML formatting for responses.
+- Summarizes mathematical formulas in plain language without returning LaTeX or formula notation.
 - Supports dynamic loading of documents from a specified GitHub repository.
 - Supports rate limit handling for Gemini API models when using free-tier accounts (only if `GOOGLE_API_MODEL` is set to `auto`).
 
