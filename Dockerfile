@@ -26,5 +26,6 @@ COPY ./main.py .
 COPY ./modules ./modules
 COPY ./sources ./sources
 ENV GIT_PYTHON_REFRESH=quiet
-RUN echo BUILD_DATE=$(date +%Y%m%d-%H%M%S) > .env
+ARG BUILD_DATE=unknown
+ENV BUILD_DATE=${BUILD_DATE}
 CMD ["python3", "./main.py"]

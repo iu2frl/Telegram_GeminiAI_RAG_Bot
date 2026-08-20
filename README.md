@@ -57,7 +57,7 @@ REPO_URL=https://github.com/octocat/hello-world
 TELEGRAM_RESTART_DELAY_SECONDS=15
 ```
 
-Please note: creating the `.env` file is optional, if the variables are set in the current environment, the bot will retrieve them from there (or from the Docker environment variables)
+Please note: creating the `.env` file is optional. If the variables are set in the current environment, the bot will retrieve them from there. Never commit this file or copy it into a container image.
 
 1. Prepare the sources
 
@@ -117,14 +117,8 @@ For detailed error messages, check the logs.
 services:
     bot:
         container_name: notebook-lm-bot
-        environment:
-          - TELEGRAM_API_KEY=your-telegram-bot-token
-          - TELEGRAM_BOT_NAME=@your-bot-username
-          - GOOGLE_API_KEY=your-google-api-key
-          - GOOGLE_API_MODEL=gemini-2.0-flash
-          - GOOGLE_API_MAX_ATTEMPTS=2
-          - REPO_URL=https://github.com/octocat/hello-world
-          - TELEGRAM_RESTART_DELAY_SECONDS=15
+        env_file:
+          - .env
         restart: unless-stopped
         image: notebook-lm-bot:latest
         deploy:
